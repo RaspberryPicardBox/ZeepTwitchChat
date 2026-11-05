@@ -12,7 +12,7 @@
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
-    <NoWarn>$(NoWarn);SYSLIB0057</NoWarn>
+    <NoWarn>$(NoWarn);SYSLIB0057;SYSLIB0014</NoWarn>
   </PropertyGroup>
 
 </Project>

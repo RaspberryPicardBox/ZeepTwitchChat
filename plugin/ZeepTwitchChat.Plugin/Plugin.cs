@@ -1,9 +1,11 @@
+using System.Collections.Generic;
 using System;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
 using HarmonyLib;
 using ZeepTwitchChat.Chat;
+using ZeepTwitchChat.Chat.Emotes;
 using ZeepTwitchChat.Twitch;
 
 namespace ZeepTwitchChat
@@ -20,7 +22,7 @@ namespace ZeepTwitchChat
     {
         public const string Guid = "com.nyxeonfox.zeepkist.twitchchat";
         public const string PluginName = "Twitch Chat";
-        public const string PluginVersion = "1.0.0";
+        public const string PluginVersion = "1.1.0";
 
         private static ManualLogSource staticLogger;
 
@@ -40,9 +42,15 @@ namespace ZeepTwitchChat
         private ConfigEntry<int> maxMessagesPerMinute;
         private ConfigEntry<float> minimumSecondsBetweenMessages;
         private ConfigEntry<int> maxMessageLength;
+        private ConfigEntry<bool> renderEmotes;
+        private ConfigEntry<bool> emoteBttv;
+        private ConfigEntry<bool> emoteFfz;
+        private ConfigEntry<int> emoteMaxCached;
+        private ConfigEntry<int> emoteSize;
 
         private ChatInjector injector;
         private TwitchIrcClient client;
+        private EmoteService emotes;
         private volatile ChatLineFormatter formatter;
         private bool loggedFirstMessage;
 
@@ -79,6 +87,13 @@ namespace ZeepTwitchChat
                 activeClient.Dispose();
             }
 
+            EmoteService activeEmotes = emotes;
+            emotes = null;
+            if (activeEmotes != null)
+            {
+                activeEmotes.Dispose();
+            }
+
             if (harmony != null)
             {
                 harmony.UnpatchSelf();
@@ -95,6 +110,12 @@ namespace ZeepTwitchChat
             {
                 activeInjector.Drain();
             }
+
+            EmoteService activeEmotes = emotes;
+            if (activeEmotes != null)
+            {
+                activeEmotes.Update();
+            }
         }
 
         private void BindConfiguration()
@@ -104,7 +125,7 @@ namespace ZeepTwitchChat
                 "installed but idle.");
 
             channel = Config.Bind("Twitch", "Channel", string.Empty,
-                "Twitch channel to read, for example 'nyxeonfox'. No '#', no twitch.tv link. " +
+                "Twitch channel to read, for example 'your_channel'. No '#', no twitch.tv link. " +
                 "Leave empty and the mod will not connect.");
 
             oauthToken = Config.Bind("Twitch", "OAuthToken", string.Empty,
@@ -151,6 +172,23 @@ namespace ZeepTwitchChat
 
             maxMessageLength = Config.Bind("Limits", "MaxMessageLength", 180,
                 "Longer Twitch messages are truncated to this many characters.");
+
+            renderEmotes = Config.Bind("Emotes", "RenderEmotes", true,
+                "Draw emotes as images instead of their text names. Emotes are downloaded on " +
+                "first use and cached for the session; until one is ready, its name is shown.");
+
+            emoteBttv = Config.Bind("Emotes", "EnableBttv", true,
+                "Resolve BetterTTV emotes (global and channel) by name.");
+
+            emoteFfz = Config.Bind("Emotes", "EnableFfz", true,
+                "Resolve FrankerFaceZ emotes (global and channel) by name.");
+
+            emoteMaxCached = Config.Bind("Emotes", "MaxCachedEmotes", 200,
+                "Upper bound on emotes downloaded and kept in the atlas for this session.");
+
+            emoteSize = Config.Bind("Emotes", "EmoteSize", 24,
+                "Rendered emote size in pixels. The chat font is roughly 24px at 1080p; raise " +
+                "this if emotes look small, lower it if they crowd the line.");
         }
 
         private void OnSettingChanged(object sender, SettingChangedEventArgs args)
@@ -179,7 +217,24 @@ namespace ZeepTwitchChat
                 MaxMessageLength = maxMessageLength.Value
             };
 
-            formatter = new ChatLineFormatter(lineOptions);
+            EmoteService previousEmotes = emotes;
+            emotes = new EmoteService(
+                new EmoteOptions
+                {
+                    Enabled = renderEmotes.Value,
+                    EnableBttv = emoteBttv.Value,
+                    EnableFfz = emoteFfz.Value,
+                    MaxCachedEmotes = emoteMaxCached.Value,
+                    RenderPixels = emoteSize.Value
+                },
+                message => Logger.LogInfo(message));
+
+            if (previousEmotes != null)
+            {
+                previousEmotes.Dispose();
+            }
+
+            formatter = new ChatLineFormatter(lineOptions, emotes);
 
             MessageRateLimiter limiter = new MessageRateLimiter(
                 Math.Max(0, maxMessagesPerMinute.Value),
@@ -216,12 +271,28 @@ namespace ZeepTwitchChat
             newClient.MessageReceived += OnTwitchMessage;
             newClient.ConnectionChanged += (connected, detail) =>
                 Logger.LogInfo("Twitch Chat: " + detail + ".");
+            newClient.RoomIdKnown += roomId =>
+            {
+                // Channel emotes (BTTV, 7TV) are keyed by the numeric room id.
+                EmoteService activeEmotes = emotes;
+                if (activeEmotes != null)
+                {
+                    activeEmotes.SetChannel(options.NormalisedChannel, roomId);
+                }
+            };
             client = newClient;
+
             newClient.Start();
+
+            EmoteService emoteService = emotes;
+            if (emoteService != null)
+            {
+                emoteService.SetChannel(options.NormalisedChannel, null);
+            }
         }
 
         /// <summary>Raised on the IRC background thread: format the line, then hand it to the injector.</summary>
-        private void OnTwitchMessage(TwitchChatUser user, string text)
+        private void OnTwitchMessage(TwitchChatUser user, string text, IReadOnlyList<EmoteSpan> spans)
         {
             ChatLineFormatter activeFormatter = formatter;
             ChatInjector activeInjector = injector;
@@ -230,7 +301,13 @@ namespace ZeepTwitchChat
                 return;
             }
 
-            activeInjector.Enqueue(activeFormatter.Format(user, text));
+            EmoteService activeEmotes = emotes;
+            if (activeEmotes != null)
+            {
+                activeEmotes.OnMessage(spans);
+            }
+
+            activeInjector.Enqueue(activeFormatter.Format(user, text, spans));
 
             if (!loggedFirstMessage)
             {

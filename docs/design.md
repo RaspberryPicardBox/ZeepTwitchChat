@@ -81,7 +81,7 @@ composed line.
   `badges`, `mod`.
 - `/me` arrives as CTCP: `\u0001ACTION text\u0001`. `TwitchIrcClient.NormaliseChatText`
   turns it into `* text`.
-- Verified live: joining `#nyxeonfox` (TLS, port 6697) returns `001`, `CAP ACK`,
+- Verified live: joining a live channel (TLS, port 6697) returns `001`, `CAP ACK`,
   `JOIN`, `ROOMSTATE`, `353`/`366` and stays connected; test traffic on busy channels
   confirmed colour tags, badges and CTCP handling.
 
@@ -92,7 +92,47 @@ into a `ConcurrentQueue`; `Plugin.Update()` drains it on the Unity main thread, 
 chat UI is touched. The queue is bounded (40 lines, oldest dropped) so a flood cannot grow
 memory, and the rate limiter decides what actually gets displayed.
 
-## 7. Deliberate limitations
+## 7. Emotes as sprites
+
+The chat's TMP components have no sprite asset of their own: player badges
+(`<sprite="achievement 2" name="host_client">`) resolve because
+`TMP_SpriteAsset.SearchForSpriteByHashCode(spriteAsset, hash, includeFallbacks: true, ...)`
+walks `spriteAsset.fallbackSpriteAssets` and then `TMP_Settings.defaultSpriteAsset`.
+
+So the mod appends its own `TMP_SpriteAsset` to
+`TMP_Settings.defaultSpriteAsset.fallbackSpriteAssets`, and emits
+`<sprite="ZeepTwitchChat Emotes" name="Kappa">`.
+
+Mechanics that were checked in the shipped assemblies rather than guessed:
+
+| Detail | Finding |
+| --- | --- |
+| `TMP_Asset.material` | public field, assignable |
+| `TMP_SpriteAsset.spriteCharacterTable` / `spriteGlyphTable` | public getters over initialised lists; `internal` setters, so the lists are filled in place |
+| `TMP_SpriteAsset.faceInfo` | `internal` setter; written through `AccessTools.FieldRefAccess<TMP_SpriteAsset, FaceInfo>("m_FaceInfo")` |
+| `FaceInfo.pointSize` | `int`, and TMP scales a sprite by `fontSize / pointSize`, so it is set to the configured emote size (24 by default) |
+| `TMP_SpriteAsset.GetSpriteIndexFromName` | used as the verification step before a name is ever emitted as a tag |
+| `Texture2D.LoadImage` | PNG/JPG only |
+
+That last row is why only PNG emotes are supported: BTTV is filtered on its `imageType`
+field, native Twitch emotes are PNG at every scale, FFZ serves PNG for static emotes, and
+7TV is unsupported entirely because it serves WebP/AVIF/GIF.
+
+Two deliberately defensive choices:
+
+1. **Verify before advertising.** A name is added to the renderable snapshot only when
+   `GetSpriteIndexFromName` finds it after `UpdateLookupTables()`. If TMP cannot resolve a
+   glyph, the formatter keeps the emote's text name, so the failure mode is "you see `Kappa`"
+   rather than a hole in the line.
+2. **Immutable snapshot for other threads.** Message formatting runs on the IRC thread, so
+   `GetSpriteTag` only reads a `HashSet<string>` that is replaced wholesale on rebuild; no
+   TMP object is touched off the main thread.
+
+The atlas is a fixed 8-column grid of 32px cells, rebuilt (throttled to once every 1.5s) as
+new images arrive. Old atlases are kept alive for a while because chat lines already rendered
+reference them, and are destroyed a rebuild or two later.
+
+## 8. Deliberate limitations
 
 - Local display only: `UpdateChatFields` never sends anything to the network.
 - No lobby means no chat window, so messages are dropped rather than replayed later.

@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 using System.Threading;
 using ZeepTwitchChat.Chat;
+using ZeepTwitchChat.Chat.Emotes;
 using ZeepTwitchChat.Twitch;
+using ZeepTwitchChat.Util;
 
 namespace ZeepTwitchChat.LogicTests
 {
@@ -22,6 +25,11 @@ namespace ZeepTwitchChat.LogicTests
                 return LiveProbe(args[1], args.Length >= 3 ? int.Parse(args[2]) : 20);
             }
 
+            if (args.Length >= 1 && args[0] == "--providers")
+            {
+                return ProvidersProbe();
+            }
+
             Console.WriteLine("ZeepTwitchChat logic checks");
             Console.WriteLine("===========================");
 
@@ -29,6 +37,8 @@ namespace ZeepTwitchChat.LogicTests
             UserChecks();
             FormatterChecks();
             RateLimiterChecks();
+            JsonChecks();
+            EmoteChecks();
 
             Console.WriteLine();
             Console.WriteLine(checks + " checks, " + failures + " failure(s).");
@@ -247,6 +257,243 @@ namespace ZeepTwitchChat.LogicTests
             Check("0 per minute means unlimited", allAllowed);
         }
 
+        // ---------------------------------------------------------------- JSON
+
+        private static void JsonChecks()
+        {
+            Console.WriteLine();
+            Console.WriteLine("Mini JSON");
+
+            Check("object with mixed values", MiniJson.TryParse(
+                "{\"a\":\"x\",\"b\":2,\"c\":true,\"d\":null,\"e\":[1,\"two\"]}", out object root) &&
+                root is Dictionary<string, object> obj &&
+                (string)obj["a"] == "x" &&
+                (double)obj["b"] == 2d &&
+                (bool)obj["c"] &&
+                obj["d"] == null &&
+                ((List<object>)obj["e"]).Count == 2, "nested parse mismatch");
+
+            Check("escapes", MiniJson.TryParse("{\"s\":\"a\\\"b\\\\c\\u0041\\n\"}", out object escaped) &&
+                             (string)((Dictionary<string, object>)escaped)["s"] == "a\"b\\cA\n");
+
+            Check("array of objects", MiniJson.TryParse("[{\"id\":\"1\"},{\"id\":\"2\"}]", out object array) &&
+                                      array is List<object> list && list.Count == 2);
+
+            Check("empty containers", MiniJson.TryParse("{\"a\":[],\"b\":{}}", out object empty) &&
+                                      ((Dictionary<string, object>)empty)["a"] is List<object> &&
+                                      ((Dictionary<string, object>)empty)["b"] is Dictionary<string, object>);
+
+            Check("invalid json rejected", !MiniJson.TryParse("{\"a\":}", out _));
+            Check("empty json rejected", !MiniJson.TryParse(string.Empty, out _));
+            Check("truncated json rejected", !MiniJson.TryParse("{\"a\":\"unterminated", out _));
+        }
+
+        /// <summary>Stand-in for the Unity sprite atlas: knows a fixed set of names.</summary>
+        private sealed class FakeEmoteProvider : IEmoteTagProvider
+        {
+            private readonly HashSet<string> known;
+
+            public FakeEmoteProvider(params string[] names)
+            {
+                known = new HashSet<string>(names, StringComparer.Ordinal);
+            }
+
+            public string GetSpriteTag(string emoteName)
+            {
+                return known.Contains(emoteName)
+                    ? "<sprite name=\"" + emoteName + "\">"
+                    : null;
+            }
+        }
+
+        // ---------------------------------------------------------------- emotes
+
+        private static void EmoteChecks()
+        {
+            Console.WriteLine();
+            Console.WriteLine("Emotes");
+
+            // --- Twitch's emotes tag -------------------------------------------------
+            List<EmoteSpan> spans = TwitchEmoteTagParser.Parse("25:0-4/25:10-14", "Kappa and Kappa");
+            Check("two spans parsed", spans.Count == 2, spans.Count.ToString());
+            Check("span text and id", spans.Count == 2 && spans[0].Name == "Kappa" &&
+                                      spans[0].Id == "25" && spans[1].Start == 10);
+
+            List<EmoteSpan> multi = TwitchEmoteTagParser.Parse("1902:0-4,6-10", "Keepo Keepo");
+            Check("multiple ranges in one group", multi.Count == 2 && multi[1].Start == 6);
+
+            Check("out of range dropped", TwitchEmoteTagParser.Parse("25:0-99", "short").Count == 0);
+            Check("reversed range dropped", TwitchEmoteTagParser.Parse("25:4-2", "Kappa").Count == 0);
+            Check("garbage dropped", TwitchEmoteTagParser.Parse("x:y-z", "Kappa").Count == 0);
+            Check("overlap dropped", TwitchEmoteTagParser.Parse("25:0-4/26:2-6", "Kappa Kappa").Count == 1);
+            Check("unsafe emote name dropped", TwitchEmoteTagParser.Parse("25:0-5", "<b>x</b>").Count == 0);
+            Check("empty tag yields none", TwitchEmoteTagParser.Parse(null, "Kappa").Count == 0);
+
+            // --- provider response parsing -------------------------------------------
+            Dictionary<string, string> bttv = EmoteProviderParsers.ParseBttv(
+                "[{\"id\":\"aaa\",\"code\":\"PogU\"},{\"id\":\"bbb\",\"code\":\"catJAM\"}]");
+            Check("bttv global", bttv.Count == 2 && bttv["PogU"] == "aaa");
+
+            Dictionary<string, string> bttvChannel = EmoteProviderParsers.ParseBttv(
+                "{\"id\":\"x\",\"emotes\":[{\"id\":\"e1\",\"code\":\"ChanA\"}]," +
+                "\"sharedEmotes\":[{\"id\":\"e2\",\"code\":\"SharedB\"}]}");
+            Check("bttv channel", bttvChannel.Count == 2 && bttvChannel["SharedB"] == "e2");
+
+            Dictionary<string, string> ffz = EmoteProviderParsers.ParseFfz(
+                "{\"sets\":{\"1\":{\"emoticons\":[{\"id\":12345,\"name\":\"FFZEmote\"}]}}}");
+            Check("ffz numeric id", ffz.Count == 1 && ffz["FFZEmote"] == "12345");
+
+            Check("unsafe provider name dropped",
+                EmoteProviderParsers.ParseBttv("[{\"id\":\"x\",\"code\":\"bad<name>\"}]").Count == 0);
+            Check("non-png bttv emote dropped",
+                EmoteProviderParsers.ParseBttv(
+                    "[{\"id\":\"a\",\"code\":\"WebpOne\",\"imageType\":\"webp\"}," +
+                    "{\"id\":\"b\",\"code\":\"PngOne\",\"imageType\":\"png\"}]").Count == 1);
+            Check("garbage provider json", EmoteProviderParsers.ParseBttv("not json").Count == 0);
+
+            // --- formatter substitution ----------------------------------------------
+            ChatLineOptions options = new ChatLineOptions();
+            ChatLineFormatter withEmotes = new ChatLineFormatter(options, new FakeEmoteProvider("Kappa"));
+            ChatLineFormatter withoutEmotes = new ChatLineFormatter(options, new FakeEmoteProvider());
+            TwitchChatUser user = new TwitchChatUser("viewer", "Viewer", "#123456", new List<string>());
+
+            string rendered = withEmotes.Format(user, "hi Kappa there",
+                TwitchEmoteTagParser.Parse("25:3-7", "hi Kappa there"));
+            Check("known emote becomes a sprite tag", rendered.Contains("<sprite name=\"Kappa\">"), rendered);
+            Check("emote name replaced by the sprite", !rendered.EndsWith("hi Kappa there"), rendered);
+
+            string notReady = withoutEmotes.Format(user, "hi Kappa there",
+                TwitchEmoteTagParser.Parse("25:3-7", "hi Kappa there"));
+            Check("emote that is not ready keeps its name", notReady.EndsWith("hi Kappa there"), notReady);
+
+            Check("no spans keeps the name", withEmotes.Format(user, "hi Kappa there", null).EndsWith("hi Kappa there"));
+
+            const string hostile = "<b>Kappa</b>";
+            string sanitised = withEmotes.Format(user, hostile, TwitchEmoteTagParser.Parse("25:3-7", hostile));
+            string body = sanitised.Substring(sanitised.IndexOf(": ", StringComparison.Ordinal) + 2);
+            Check("markup around an emote is stripped",
+                !body.Contains("<b>") && !body.Contains("</b>") && body.Contains("<sprite name=\"Kappa\">"), body);
+
+            // Truncation must never leave a half-written tag in the line.
+            StringBuilder message = new StringBuilder("start");
+            List<EmoteSpan> many = new List<EmoteSpan>();
+            for (int i = 0; i < 20; i++)
+            {
+                message.Append(" Kappa");
+                many.Add(new EmoteSpan(message.Length - 5, 5, "Kappa", "25"));
+            }
+
+            ChatLineFormatter tiny = new ChatLineFormatter(
+                new ChatLineOptions { MaxMessageLength = 32 }, new FakeEmoteProvider("Kappa"));
+
+            string truncated = tiny.Format(user, message.ToString(), many);
+            Check("truncation keeps every tag whole",
+                CountOccurrences(truncated, "<sprite") == CountOccurrences(truncated, "<sprite name=\"Kappa\">"),
+                truncated);
+            Check("truncated line is marked", truncated.EndsWith("..."), truncated);
+        }
+
+        private static int CountOccurrences(string haystack, string needle)
+        {
+            int count = 0;
+            int index = 0;
+            while ((index = haystack.IndexOf(needle, index, StringComparison.Ordinal)) >= 0)
+            {
+                count++;
+                index += needle.Length;
+            }
+
+            return count;
+        }
+
+        /// <summary>Prints emote spans for the live probe in a compact form.</summary>
+        private static string DescribeSpans(IReadOnlyList<EmoteSpan> spans)
+        {
+            if (spans == null || spans.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            StringBuilder builder = new StringBuilder(" [");
+            for (int i = 0; i < spans.Count; i++)
+            {
+                if (i > 0)
+                {
+                    builder.Append(", ");
+                }
+
+                builder.Append(spans[i].Name).Append('#').Append(spans[i].Id)
+                       .Append('@').Append(spans[i].Start);
+            }
+
+            return builder.Append(']').ToString();
+        }
+
+        // ---------------------------------------------------------------- provider probe
+
+        /// <summary>
+        /// Fetches the real third-party emote lists and runs the parsers over them. This is
+        /// the only way to catch a provider changing its schema without launching the game.
+        /// </summary>
+        private static int ProvidersProbe()
+        {
+            Console.WriteLine("Emote provider probe");
+            Console.WriteLine("====================");
+
+            int failures = 0;
+            failures += CheckProvider("BTTV global", "https://api.betterttv.net/3/cached/emotes/global",
+                EmoteProviderParsers.ParseBttv, EmoteUrls.Bttv);
+            failures += CheckProvider("FFZ global", "https://api.frankerfacez.com/v1/set/global",
+                EmoteProviderParsers.ParseFfz, EmoteUrls.Ffz);
+
+            Console.WriteLine();
+            Console.WriteLine("provider probe: " + failures + " failure(s).");
+            return failures == 0 ? 0 : 1;
+        }
+
+        private static int CheckProvider(
+            string label,
+            string url,
+            Func<string, Dictionary<string, string>> parser,
+            Func<string, string> urlBuilder)
+        {
+            try
+            {
+                System.Net.HttpWebRequest request = (System.Net.HttpWebRequest)System.Net.WebRequest.Create(url);
+                request.UserAgent = "ZeepTwitchChat/1.1 provider probe";
+                request.Accept = "application/json";
+                request.Timeout = 15000;
+
+                string json;
+                using (System.Net.WebResponse response = request.GetResponse())
+                using (System.IO.Stream stream = response.GetResponseStream())
+                using (System.IO.StreamReader reader = new System.IO.StreamReader(stream))
+                {
+                    json = reader.ReadToEnd();
+                }
+
+                Dictionary<string, string> emotes = parser(json);
+                string sample = null;
+                string sampleUrl = null;
+                foreach (KeyValuePair<string, string> emote in emotes)
+                {
+                    sample = emote.Key;
+                    sampleUrl = urlBuilder(emote.Value);
+                    break;
+                }
+
+                bool ok = emotes.Count > 0 && sample != null;
+                Console.WriteLine("  " + (ok ? "PASS" : "FAIL") + "  " + label + ": " +
+                                  emotes.Count + " emote(s), e.g. " + sample + " -> " + sampleUrl);
+                return ok ? 0 : 1;
+            }
+            catch (Exception exception)
+            {
+                Console.WriteLine("  FAIL  " + label + ": " + exception.GetType().Name + ": " + exception.Message);
+                return 1;
+            }
+        }
+
         // ---------------------------------------------------------------- live probe
 
         /// <summary>
@@ -279,12 +526,13 @@ namespace ZeepTwitchChat.LogicTests
                     connected |= isConnected;
                     Console.WriteLine("  [state] " + detail);
                 };
-                client.MessageReceived += (user, text) =>
+                client.MessageReceived += (user, text, spans) =>
                 {
                     received++;
                     Console.WriteLine();
                     Console.WriteLine("  raw: " + user.DisplayName + " (" + user.Login + "): " + text);
-                    Console.WriteLine("  tmp: " + formatter.Format(user, text));
+                    Console.WriteLine("  emotes: " + spans.Count + DescribeSpans(spans));
+                    Console.WriteLine("  tmp: " + formatter.Format(user, text, spans));
                 };
 
                 client.Start();

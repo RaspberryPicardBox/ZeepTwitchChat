@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System;
 using System.Text;
 using ZeepTwitchChat.Twitch;
@@ -45,14 +46,20 @@ namespace ZeepTwitchChat.Chat
         };
 
         private readonly ChatLineOptions options;
+        private readonly IEmoteTagProvider emoteTagProvider;
 
-        public ChatLineFormatter(ChatLineOptions options)
+        public ChatLineFormatter(ChatLineOptions options, IEmoteTagProvider emoteTagProvider = null)
         {
             this.options = options ?? new ChatLineOptions();
+            this.emoteTagProvider = emoteTagProvider;
         }
 
-        /// <summary>Builds the rich-text chat line for one message.</summary>
-        public string Format(TwitchChatUser user, string message)
+        /// <summary>
+        /// Builds the rich-text chat line for one message. When <paramref name="emotes"/> is
+        /// supplied (from Twitch's <c>emotes</c> tag) and the provider can render an emote,
+        /// the emote is replaced by a sprite tag; otherwise its plain name is kept.
+        /// </summary>
+        public string Format(TwitchChatUser user, string message, IReadOnlyList<EmoteSpan> emotes = null)
         {
             if (user == null)
             {
@@ -79,10 +86,114 @@ namespace ZeepTwitchChat.Chat
                    .Append(ResolveColour(user, options.UseTwitchColours))
                    .Append("><b>")
                    .Append(SanitiseText(user.DisplayName, 32))
-                   .Append("</b></color>: ")
-                   .Append(SanitiseMessage(message, options.MaxMessageLength));
+                   .Append("</b></color>: ");
+
+            AppendMessage(builder, message, emotes);
 
             return builder.ToString();
+        }
+
+        /// <summary>
+        /// Appends the message body, swapping emotes for sprite tags and enforcing the length
+        /// budget as it goes so a tag is never cut in half. Untrusted characters are
+        /// sanitised one at a time, which is what makes emote substitution safe: only tags we
+        /// generate ourselves ever reach the output.
+        /// </summary>
+        private void AppendMessage(StringBuilder builder, string message, IReadOnlyList<EmoteSpan> emotes)
+        {
+            if (string.IsNullOrEmpty(message))
+            {
+                return;
+            }
+
+            int maxLength = options.MaxMessageLength;
+            int budget = maxLength > 3 ? maxLength - 3 : maxLength;
+            int units = 0;
+            bool truncated = false;
+            bool lastWasSpace = false;
+            int spanIndex = 0;
+
+            for (int i = 0; i < message.Length; i++)
+            {
+                if (emotes != null && spanIndex < emotes.Count && emotes[spanIndex].Start == i)
+                {
+                    EmoteSpan span = emotes[spanIndex];
+                    spanIndex++;
+
+                    string tag = emoteTagProvider == null ? null : emoteTagProvider.GetSpriteTag(span.Name);
+                    if (!string.IsNullOrEmpty(tag))
+                    {
+                        if (maxLength > 0 && units >= budget)
+                        {
+                            truncated = true;
+                            break;
+                        }
+
+                        builder.Append(tag);
+                        units++;
+                        lastWasSpace = false;
+                        i += span.Length - 1;
+
+                        // Skip any entry that sits inside the emote we just consumed.
+                        while (spanIndex < emotes.Count && emotes[spanIndex].Start <= i)
+                        {
+                            spanIndex++;
+                        }
+
+                        continue;
+                    }
+                }
+
+                char c = message[i];
+
+                // Angle brackets would let a chatter inject TextMeshPro markup.
+                if (c == '<' || c == '>')
+                {
+                    continue;
+                }
+
+                bool isSpace = c == ' ' || c == '\r' || c == '\n' || c == '\t' || c < ' ';
+                if (isSpace)
+                {
+                    if (lastWasSpace)
+                    {
+                        continue;
+                    }
+
+                    if (maxLength > 0 && units >= budget)
+                    {
+                        truncated = true;
+                        break;
+                    }
+
+                    lastWasSpace = true;
+                    builder.Append(' ');
+                    units++;
+                    continue;
+                }
+
+                if (maxLength > 0 && units >= budget)
+                {
+                    truncated = true;
+                    break;
+                }
+
+                lastWasSpace = false;
+                builder.Append(c);
+                units++;
+            }
+
+            if (!truncated)
+            {
+                return;
+            }
+
+            if (builder.Length > 0 && builder[builder.Length - 1] == ' ')
+            {
+                builder.Length--;
+            }
+
+            builder.Append("...");
         }
 
         private static void AppendBadges(StringBuilder builder, TwitchChatUser user)

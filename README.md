@@ -30,6 +30,8 @@ lobby: the lines are written straight into your local chat UI.
 - Reads your channel with Twitch's IRC interface over TLS — read-only, no OAuth token required.
 - Writes each message into the game's own chat window with TextMeshPro rich text, exactly the
   way the game renders its own chat lines.
+- Draws **emotes as images** — native Twitch emotes, plus BetterTTV and FrankerFaceZ (global
+  and channel) — downloading each one the first time it is used and caching it for the session.
 - Rate-limits and truncates so a fast channel cannot flood the chat.
 - Reconnects on its own if the connection drops.
 
@@ -38,7 +40,10 @@ lobby: the lines are written straight into your local chat UI.
 - Send anything to the lobby, to Photon, or to Twitch. You cannot chat back through the game.
 - Show messages when you are not in an online lobby: that is the only place Zeepkist has a
   chat window.
-- Show avatars or emotes; `/me` lines are shown with a leading `* `.
+- Render animated emotes, or emotes that only exist as WebP/AVIF/GIF (that includes all of
+  7TV). Unity's image decoder is PNG/JPG only, so those keep their text name instead of
+  leaving a hole in the line.
+- Show avatars; `/me` lines are shown with a leading `* `.
 
 ---
 
@@ -75,8 +80,8 @@ in game) and set **at least** your channel:
 
 ```ini
 [Twitch]
-## Twitch channel to read, for example 'nyxeonfox'. No '#', no twitch.tv link.
-Channel = nyxeonfox
+## Twitch channel to read, for example 'your_channel'. No '#', no twitch.tv link.
+Channel = your_channel
 ```
 
 Changes are applied immediately: the mod reconnects with the new settings.
@@ -96,6 +101,11 @@ Changes are applied immediately: the mod reconnects with the new settings.
 | Limits | `MaxMessagesPerMinute` | `30` | Insertion budget; `0` = unlimited |
 | Limits | `MinimumSecondsBetweenMessages` | `0.75` | Hard floor between insertions; `0` = none |
 | Limits | `MaxMessageLength` | `180` | Longer messages are truncated |
+| Emotes | `RenderEmotes` | `true` | Draw emotes as images instead of text names |
+| Emotes | `EnableBttv` | `true` | Resolve BetterTTV emotes (global and channel) |
+| Emotes | `EnableFfz` | `true` | Resolve FrankerFaceZ emotes (global and channel) |
+| Emotes | `MaxCachedEmotes` | `200` | Upper bound on images downloaded per session |
+| Emotes | `EmoteSize` | `24` | Rendered emote size in pixels (chat text is ~24px at 1080p) |
 | Advanced | `IrcHost` | `irc.chat.twitch.tv` | Twitch IRC host |
 | Advanced | `IrcPort` | `6697` | `6697` = TLS, `6667` = plain text |
 | Advanced | `UseTls` | `true` | Encrypt the connection |
@@ -115,6 +125,10 @@ Changes are applied immediately: the mod reconnects with the new settings.
 - **Chat is public.** The connection is anonymous and read-only, and every message read is
   already public. TLS is on by default; the certificate-tolerance option exists only
   because Mono's trust store inside Proton prefixes is often stale.
+- **Emotes appear as they arrive.** Each new emote name is downloaded once, then drawn from a
+  single runtime sprite atlas. Until an image is ready the emote shows as text, so a slow
+  connection degrades to plain names rather than blank space. If emotes look too small or too
+  large for your resolution, change `Emotes/EmoteSize`.
 
 ## Troubleshooting
 
@@ -139,7 +153,10 @@ dotnet build plugin/ZeepTwitchChat.Plugin -c Release
 dotnet run --project tests/ZeepTwitchChat.LogicTests -c Release
 
 # Live probe: joins a real channel and prints the formatted TMP lines
-dotnet run --project tests/ZeepTwitchChat.LogicTests -c Release -- --live nyxeonfox 20
+dotnet run --project tests/ZeepTwitchChat.LogicTests -c Release -- --live your_channel 20
+
+# Emote provider probe: runs the BTTV/FFZ parsers against the live APIs
+dotnet run --project tests/ZeepTwitchChat.LogicTests -c Release -- --providers
 
 # Copy the DLL into the game, or build a zip for mod.io
 tools/deploy-plugin.sh

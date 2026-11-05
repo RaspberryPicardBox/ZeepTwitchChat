@@ -74,14 +74,20 @@ namespace ZeepTwitchChat.Twitch
             this.options = options ?? throw new ArgumentNullException(nameof(options));
         }
 
-        /// <summary>Raised for every chat message, with the chatter and the message text.</summary>
-        public event Action<TwitchChatUser, string> MessageReceived;
+        /// <summary>Raised for every chat message: the chatter, the text, and any emote spans.</summary>
+        public event Action<TwitchChatUser, string, IReadOnlyList<EmoteSpan>> MessageReceived;
 
         /// <summary>Raised when the connection comes up (true) or drops (false).</summary>
         public event Action<bool, string> ConnectionChanged;
 
+        /// <summary>Raised once the server tells us the channel's numeric id (needed for BTTV/7TV channel emotes).</summary>
+        public event Action<string> RoomIdKnown;
+
         /// <summary>Diagnostics for the BepInEx log.</summary>
         public event Action<string> Log;
+
+        /// <summary>Twitch's numeric id for the channel, or null until the server sends it.</summary>
+        public string RoomId { get; private set; }
 
         public bool IsRunning => running;
 
@@ -290,6 +296,23 @@ namespace ZeepTwitchChat.Twitch
                 return true;
             }
 
+            string roomId = message.GetTag("room-id");
+            if (!string.IsNullOrEmpty(roomId) && roomId != RoomId)
+            {
+                RoomId = roomId;
+                Action<string> roomHandler = RoomIdKnown;
+                if (roomHandler != null)
+                {
+                    try
+                    {
+                        roomHandler(roomId);
+                    }
+                    catch (Exception)
+                    {
+                    }
+                }
+            }
+
             switch (message.Command)
             {
                 case "001":
@@ -362,7 +385,18 @@ namespace ZeepTwitchChat.Twitch
                 return;
             }
 
-            Action<TwitchChatUser, string> handler = MessageReceived;
+            List<EmoteSpan> emotes;
+            try
+            {
+                emotes = TwitchEmoteTagParser.Parse(message.GetTag("emotes"), text);
+            }
+            catch (Exception exception)
+            {
+                RaiseLog("Twitch IRC: could not read emotes: " + exception.Message);
+                emotes = new List<EmoteSpan>();
+            }
+
+            Action<TwitchChatUser, string, IReadOnlyList<EmoteSpan>> handler = MessageReceived;
             if (handler == null)
             {
                 return;
@@ -370,7 +404,7 @@ namespace ZeepTwitchChat.Twitch
 
             try
             {
-                handler(user, text);
+                handler(user, text, emotes);
             }
             catch (Exception exception)
             {

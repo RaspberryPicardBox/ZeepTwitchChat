@@ -42,7 +42,7 @@
       <Private>false</Private>
     </Reference>
 
-    <!-- Game logic (global namespace types such as OnlineChatUI) + Unity core. -->
+    <!-- Game logic (global namespace types such as OnlineChatUI) + Unity modules. -->
     <Reference Include="Zeepkist">
       <HintPath>$(ManagedDir)/Zeepkist.dll</HintPath>
       <Private>false</Private>
@@ -53,6 +53,20 @@
     </Reference>
     <Reference Include="UnityEngine.CoreModule">
       <HintPath>$(ManagedDir)/UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- TextMeshPro + the text-core types (FaceInfo, GlyphMetrics, GlyphRect) used to build
+         the runtime emote sprite asset, and ImageConversion for Texture2D.LoadImage. -->
+    <Reference Include="Unity.TextMeshPro">
+      <HintPath>$(ManagedDir)/Unity.TextMeshPro.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.TextCoreFontEngineModule">
+      <HintPath>$(ManagedDir)/UnityEngine.TextCoreFontEngineModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.ImageConversionModule">
+      <HintPath>$(ManagedDir)/UnityEngine.ImageConversionModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>
