@@ -4,6 +4,36 @@ All notable changes to ZeepTwitchChat are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-11-05
+
+### Fixed
+
+- **Emotes never rendered** (`NullReferenceException` logged as "could not build the emote
+  atlas"). TMP's `UpdateLookupTables` calls its legacy `UpgradeSpriteAsset` whenever
+  `material != null` and the asset's version string is empty — and that method walks
+  `spriteInfoList`, which is null on a runtime-created asset. It also cleared the glyph tables
+  that had just been filled. Verified against the shipped `Unity.TextMeshPro.dll`. The asset is
+  now marked as current-version, given an empty `spriteInfoList`, and only receives its
+  material after the lookup tables are built.
+- The emote sprite asset is now also attached to the chat's own text components
+  (`bigChatField`/`smallChatField`) when they have no sprite asset, because a text with a null
+  `spriteAsset` resolves no sprite tags at all. Emote tags use the plain
+  `<sprite name="...">` form so they resolve through the asset the chat actually uses, rather
+  than TMP's separate asset-name registry.
+- Rebuilds swap the previous atlas for the new one in place (keeping the old asset as a
+  fallback) so emote glyphs added later are visible instead of pinning the first atlas.
+- Building an asset without the game's default sprite asset no longer fails: the material is
+  cloned when possible, otherwise built from `TextMeshPro/Sprite`, and face metrics are derived
+  from the configured emote size.
+
+### Changed
+
+- Rebuild failures log the exception type, message and first stack frame, and a successful
+  rebuild reports the sprite source, shader and how many chat fields were attached — enough to
+  diagnose any future TMP change from `LogOutput.log` alone.
+- A provider that has no emotes for a channel (HTTP 404) is reported as "no emotes registered"
+  instead of looking like a network failure.
+
 ## [1.1.0] - 2026-11-05
 
 ### Added

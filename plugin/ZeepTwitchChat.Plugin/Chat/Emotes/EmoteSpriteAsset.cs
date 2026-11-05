@@ -29,6 +29,7 @@ namespace ZeepTwitchChat.Chat.Emotes
         private const int Columns = 8;
 
         private static AccessTools.FieldRef<TMP_SpriteAsset, FaceInfo> faceInfoRef;
+        private static AccessTools.FieldRef<TMP_SpriteAsset, string> versionRef;
 
         private readonly Dictionary<string, Texture2D> textures = new Dictionary<string, Texture2D>(StringComparer.Ordinal);
         private readonly List<string> order = new List<string>();
@@ -59,6 +60,19 @@ namespace ZeepTwitchChat.Chat.Emotes
         /// <summary>Number of emote names TMP can currently resolve.</summary>
         public int RenderableCount => renderable.Count;
 
+        /// <summary>
+        /// Re-attaches the current asset to the chat fields. Cheap and idempotent; called each
+        /// frame so a lobby joined after the first rebuild still gets emotes.
+        /// </summary>
+        public void EnsureAttached()
+        {
+            TMP_SpriteAsset current = asset;
+            if (current != null)
+            {
+                ChatTextTargets.Apply(ChatInjector.Instance, current, log);
+            }
+        }
+
         /// <summary>Adds a decoded emote texture. Call on the main thread.</summary>
         public void Add(string name, Texture2D texture)
         {
@@ -80,6 +94,10 @@ namespace ZeepTwitchChat.Chat.Emotes
         /// <summary>
         /// Sprite tag for an emote, or null when it is not renderable yet. Safe to call from
         /// the IRC thread: it only reads an immutable snapshot.
+        ///
+        /// The plain form is deliberate: it resolves against the chat text's own sprite asset
+        /// (which we set when it had none) instead of the asset-name lookup that TMP routes
+        /// through MaterialReferenceManager.
         /// </summary>
         public string GetSpriteTag(string emoteName)
         {
@@ -88,7 +106,7 @@ namespace ZeepTwitchChat.Chat.Emotes
                 return null;
             }
 
-            return "<sprite=\"" + AssetName + "\" name=\"" + emoteName + "\">";
+            return "<sprite name=\"" + emoteName + "\">";
         }
 
         /// <summary>Rebuilds the atlas when new emotes arrived. Main thread, once per frame.</summary>
@@ -107,21 +125,30 @@ namespace ZeepTwitchChat.Chat.Emotes
             }
             catch (Exception exception)
             {
-                log("Twitch Chat: could not build the emote atlas (" +
-                    exception.GetType().Name + ": " + exception.Message + "); emotes stay as text.");
+                log("Twitch Chat: could not build the emote atlas (" + Describe(exception) +
+                    "); emotes stay as text.");
                 renderable = new HashSet<string>(StringComparer.Ordinal);
                 dirty = false;
             }
         }
 
+        /// <summary>Type, message and the first stack frame: enough to locate a failure from a log.</summary>
+        private static string Describe(Exception exception)
+        {
+            string stack = exception.StackTrace;
+            if (!string.IsNullOrEmpty(stack))
+            {
+                int newline = stack.IndexOf('\n');
+                stack = (newline > 0 ? stack.Substring(0, newline) : stack).Trim();
+                return exception.GetType().Name + ": " + exception.Message + " @ " + stack;
+            }
+
+            return exception.GetType().Name + ": " + exception.Message;
+        }
+
         private void Rebuild()
         {
-            TMP_SpriteAsset defaultAsset = TMP_Settings.defaultSpriteAsset;
-            if (defaultAsset == null)
-            {
-                log("Twitch Chat: the game has no default sprite asset; emotes stay as text.");
-                return;
-            }
+            TMP_SpriteAsset defaultAsset = GetDefaultSpriteAsset();
 
             int rows = (order.Count + Columns - 1) / Columns;
             int width = Columns * CellPixels;
@@ -151,20 +178,28 @@ namespace ZeepTwitchChat.Chat.Emotes
             newAtlas.SetPixels32(pixels);
             newAtlas.Apply(false, false);
 
-            Material material = new Material(defaultAsset.material)
+            Material material = CreateSpriteMaterial(defaultAsset, newAtlas);
+            if (material == null)
             {
-                mainTexture = newAtlas,
-                name = "ZeepTwitchChat Emotes"
-            };
+                UnityEngine.Object.Destroy(newAtlas);
+                log("Twitch Chat: no TextMeshPro sprite shader is available; emotes stay as text.");
+                return;
+            }
 
             TMP_SpriteAsset created = ScriptableObject.CreateInstance<TMP_SpriteAsset>();
             created.name = AssetName;
-            created.material = material;
             created.spriteSheet = newAtlas;
 
-            FaceInfo face = defaultAsset.faceInfo;
-            face.pointSize = renderPixels;
-            SetFaceInfo(created, face);
+            // Guard against TMP's legacy upgrade path. UpdateLookupTables() calls
+            // UpgradeSpriteAsset() when "material != null && version is empty", and that
+            // method walks spriteInfoList, which is null on a runtime-created asset. It also
+            // clears the glyph tables. Marking the asset current and assigning the material
+            // only afterwards keeps that path from ever running (verified against the
+            // shipped TMP build).
+            created.spriteInfoList = new List<TMP_Sprite>();
+            MarkCurrentVersion(created);
+
+            SetFaceInfo(created, CreateFaceInfo(defaultAsset));
 
             created.spriteCharacterTable.Clear();
             created.spriteGlyphTable.Clear();
@@ -192,6 +227,10 @@ namespace ZeepTwitchChat.Chat.Emotes
 
             created.UpdateLookupTables();
 
+            // Material last: with the version marked above this is belt and braces, but it
+            // also means a future TMP change cannot re-enter the legacy upgrade path here.
+            created.material = material;
+
             // Only advertise names TMP can actually resolve, so a failed glyph never costs
             // the chatter their emote name in the chat line.
             HashSet<string> verified = new HashSet<string>(StringComparer.Ordinal);
@@ -204,13 +243,20 @@ namespace ZeepTwitchChat.Chat.Emotes
             }
 
             UnregisterFallback();
-            if (defaultAsset.fallbackSpriteAssets == null)
+            if (defaultAsset != null)
             {
-                defaultAsset.fallbackSpriteAssets = new List<TMP_SpriteAsset>();
+                if (defaultAsset.fallbackSpriteAssets == null)
+                {
+                    defaultAsset.fallbackSpriteAssets = new List<TMP_SpriteAsset>();
+                }
+
+                defaultAsset.fallbackSpriteAssets.Add(created);
+                registeredFallback = created;
             }
 
-            defaultAsset.fallbackSpriteAssets.Add(created);
-            registeredFallback = created;
+            // The chat text must be able to see the asset: a text with a null spriteAsset
+            // resolves nothing at all (checked in TMP_Text.ParseText).
+            int attached = ChatTextTargets.Apply(ChatInjector.Instance, created, log);
 
             // Keep the previous atlas alive briefly: chat lines already rendered reference it.
             Retire(asset);
@@ -220,7 +266,9 @@ namespace ZeepTwitchChat.Chat.Emotes
             renderable = verified;
 
             log("Twitch Chat: emote atlas rebuilt (" + verified.Count + " of " + order.Count +
-                " emote(s) resolvable).");
+                " emote(s) resolvable; " + attached + " chat field(s) attached; source=" +
+                (defaultAsset == null ? "none" : defaultAsset.name) +
+                "; shader=" + (material.shader == null ? "none" : material.shader.name) + ").");
         }
 
         /// <summary>Copies one emote texture into an atlas cell, scaling to the cell size.</summary>
@@ -262,6 +310,103 @@ namespace ZeepTwitchChat.Chat.Emotes
             }
         }
 
+        /// <summary>
+        /// The game's default sprite asset, or null. Guarded because TMP's settings object can
+        /// fail to load, which makes the property throw rather than return null.
+        /// </summary>
+        private static TMP_SpriteAsset GetDefaultSpriteAsset()
+        {
+            try
+            {
+                return TMP_Settings.defaultSpriteAsset;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>Clones the sprite material when possible, otherwise builds one from TMP's sprite shader.</summary>
+        private static Material CreateSpriteMaterial(TMP_SpriteAsset source, Texture2D atlas)
+        {
+            try
+            {
+                if (source != null && source.material != null)
+                {
+                    return new Material(source.material)
+                    {
+                        mainTexture = atlas,
+                        name = "ZeepTwitchChat Emotes"
+                    };
+                }
+            }
+            catch (Exception)
+            {
+                // Fall through to the shader lookup below.
+            }
+
+            Shader shader = Shader.Find("TextMeshPro/Sprite");
+            if (shader == null)
+            {
+                shader = Shader.Find("TextMeshPro/Mobile/Bitmap");
+            }
+
+            if (shader == null)
+            {
+                return null;
+            }
+
+            Material material = new Material(shader)
+            {
+                name = "ZeepTwitchChat Emotes"
+            };
+
+            material.mainTexture = atlas;
+            return material;
+        }
+
+        /// <summary>
+        /// Face metrics for the emote asset. Copied from the game's sprite asset when there is
+        /// one, otherwise derived from the configured emote size: TMP scales a sprite by
+        /// <c>fontSize / pointSize</c>, so pointSize must never be zero.
+        /// </summary>
+        private FaceInfo CreateFaceInfo(TMP_SpriteAsset source)
+        {
+            if (source != null)
+            {
+                FaceInfo template = source.faceInfo;
+                if (template.pointSize > 0)
+                {
+                    template.pointSize = renderPixels;
+                    return template;
+                }
+            }
+
+            int pointSize = renderPixels;
+            return new FaceInfo
+            {
+                familyName = AssetName,
+                styleName = "Regular",
+                pointSize = pointSize,
+                scale = 1f,
+                lineHeight = pointSize,
+                ascentLine = pointSize * 0.8f,
+                capLine = pointSize * 0.7f,
+                meanLine = pointSize * 0.5f,
+                baseline = 0f,
+                descentLine = pointSize * -0.2f,
+                superscriptOffset = pointSize * 0.5f,
+                superscriptSize = 0.5f,
+                subscriptOffset = pointSize * 0.5f,
+                subscriptSize = 0.5f,
+                underlineOffset = pointSize * -0.1f,
+                underlineThickness = 1f,
+                strikethroughOffset = pointSize * 0.25f,
+                strikethroughThickness = 1f,
+                tabWidth = pointSize * 4f
+            };
+        }
+
         /// <summary><c>faceInfo</c> has an internal setter, so its field is written directly.</summary>
         private static void SetFaceInfo(TMP_SpriteAsset spriteAsset, FaceInfo faceInfo)
         {
@@ -271,6 +416,20 @@ namespace ZeepTwitchChat.Chat.Emotes
             }
 
             faceInfoRef(spriteAsset) = faceInfo;
+        }
+
+        /// <summary>
+        /// Sets TMP's private version string so <c>UpdateLookupTables</c> treats the asset as
+        /// already upgraded and skips <c>UpgradeSpriteAsset</c>.
+        /// </summary>
+        private static void MarkCurrentVersion(TMP_SpriteAsset spriteAsset)
+        {
+            if (versionRef == null)
+            {
+                versionRef = AccessTools.FieldRefAccess<TMP_SpriteAsset, string>("m_Version");
+            }
+
+            versionRef(spriteAsset) = "1.1.0";
         }
 
         private void UnregisterFallback()

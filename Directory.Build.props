@@ -69,6 +69,11 @@
       <HintPath>$(ManagedDir)/UnityEngine.ImageConversionModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <!-- TextMeshProUGUI derives from MaskableGraphic, so the UI module is needed to name it. -->
+    <Reference Include="UnityEngine.UI">
+      <HintPath>$(ManagedDir)/UnityEngine.UI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
   <!-- Fail fast, with an actionable message, when the references are missing. -->

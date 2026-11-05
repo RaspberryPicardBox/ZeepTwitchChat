@@ -138,6 +138,9 @@ namespace ZeepTwitchChat.Chat.Emotes
                 return;
             }
 
+            // A lobby can be joined after the first rebuild, so keep the attachment fresh.
+            atlas.EnsureAttached();
+
             bool decodedAny = false;
 
             // A few per frame: enough to fill quickly, few enough not to hitch the game.
@@ -232,10 +235,11 @@ namespace ZeepTwitchChat.Chat.Emotes
             {
                 try
                 {
-                    string json = GetText(url);
-                    if (json == null)
+                    if (!TryGetText(url, out string json, out bool notFound))
                     {
-                        log("Twitch Chat: " + label + " emotes unavailable; continuing without them.");
+                        log(notFound
+                            ? "Twitch Chat: no " + label + " emotes registered; continuing without them."
+                            : "Twitch Chat: " + label + " emotes unavailable; continuing without them.");
                         return;
                     }
 
@@ -266,10 +270,13 @@ namespace ZeepTwitchChat.Chat.Emotes
             thread.Start();
         }
 
-        private static string GetText(string url)
+        private static bool TryGetText(string url, out string json, out bool notFound)
         {
+            json = null;
+            notFound = false;
+
             HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
-            request.UserAgent = "ZeepTwitchChat/1.1 (+https://mod.io/g/zeepkist)";
+            request.UserAgent = "ZeepTwitchChat/1.2 (+https://mod.io/g/zeepkist)";
             request.Accept = "application/json";
             request.Timeout = 10000;
             request.ReadWriteTimeout = 10000;
@@ -282,18 +289,27 @@ namespace ZeepTwitchChat.Chat.Emotes
                 {
                     if (stream == null)
                     {
-                        return null;
+                        return false;
                     }
 
                     using (StreamReader reader = new StreamReader(stream))
                     {
-                        return reader.ReadToEnd();
+                        json = reader.ReadToEnd();
+                        return true;
                     }
                 }
             }
+            catch (WebException exception)
+            {
+                // A 404 means the channel simply has no emotes on that provider, which is
+                // normal and should not read like a failure.
+                HttpWebResponse errorResponse = exception.Response as HttpWebResponse;
+                notFound = errorResponse != null && errorResponse.StatusCode == HttpStatusCode.NotFound;
+                return false;
+            }
             catch (Exception)
             {
-                return null;
+                return false;
             }
         }
 

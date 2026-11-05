@@ -99,9 +99,25 @@ The chat's TMP components have no sprite asset of their own: player badges
 `TMP_SpriteAsset.SearchForSpriteByHashCode(spriteAsset, hash, includeFallbacks: true, ...)`
 walks `spriteAsset.fallbackSpriteAssets` and then `TMP_Settings.defaultSpriteAsset`.
 
-So the mod appends its own `TMP_SpriteAsset` to
-`TMP_Settings.defaultSpriteAsset.fallbackSpriteAssets`, and emits
-`<sprite="ZeepTwitchChat Emotes" name="Kappa">`.
+Two traps were found by testing against the live game, and both are now handled:
+
+1. **`UpdateLookupTables()` runs a legacy upgrade.** It calls `UpgradeSpriteAsset()` when
+   `material != null && string.IsNullOrEmpty(m_Version)`. That method walks
+   `spriteInfoList`, which is `null` on a runtime-created asset, so it throws a
+   `NullReferenceException` — and it clears the glyph tables *before* throwing. The asset is
+   therefore given an empty `spriteInfoList`, marked with TMP's current version string, and
+   only receives its material after the lookup tables are built.
+2. **A text with a null `spriteAsset` resolves nothing.** `TMP_Text.ParseText` picks the
+   starting asset from `m_spriteAsset`, then `m_defaultSpriteAsset`, then
+   `TMP_Settings.defaultSpriteAsset`, then `Resources.Load(...)`, and returns false if all are
+   null. So the mod attaches its asset directly to `OnlineChatUI.bigChatField` /
+   `smallChatField` when those have no sprite asset (never overwriting another mod's choice),
+   and emits the plain `<sprite name="Kappa">` form, which resolves against that asset. The
+   asset-name form (`<sprite="asset" name="x">`) goes through
+   `MaterialReferenceManager` instead and would need separate registration.
+
+The asset is also appended to `TMP_Settings.defaultSpriteAsset.fallbackSpriteAssets` when that
+exists, so lookups from other text components still find the emotes.
 
 Mechanics that were checked in the shipped assemblies rather than guessed:
 
