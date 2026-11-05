@@ -122,6 +122,43 @@ namespace ZeepTwitchChat.LogicTests
                 EmoteFrameNames.AdvanceByTime(0, fast, ref due, 0.11f, 2) == 1 &&
                 Math.Abs(due - 0.12f) < 0.001f, due.ToString());
 
+            // --- setting the frame, not advancing it --------------------------------
+            // Zeepkist rebuilds the chat field from its stored lines after every message, which
+            // puts the emote back on frame 0. Retargeting recovers on the next tick.
+            int swaps;
+            string chat = "line one " + Sprite("Kappa") + " tail";
+            string moved = EmoteFrameNames.Retarget(chat, "Kappa", 5, 3, out swaps);
+            Check("retarget moves the emote to the given frame",
+                swaps == 1 && moved.Contains(Sprite("Kappa~3")), moved);
+            Check("retarget leaves the rest of the line alone",
+                moved.StartsWith("line one ") && moved.EndsWith(" tail"), moved);
+
+            string already = EmoteFrameNames.Retarget(moved, "Kappa", 5, 3, out swaps);
+            Check("retarget is a no-op when the frame is already right",
+                swaps == 0 && already == moved);
+
+            string stale = Sprite("Kappa~2") + " and " + Sprite("Kappa");
+            string pulled = EmoteFrameNames.Retarget(stale, "Kappa", 5, 4, out swaps);
+            Check("a reset line is pulled back to the current frame",
+                swaps == 2 && !pulled.Contains(Sprite("Kappa")) &&
+                !pulled.Contains("Kappa~2") &&
+                pulled == Sprite("Kappa~4") + " and " + Sprite("Kappa~4"), pulled);
+
+            Check("retarget ignores lines without the emote",
+                EmoteFrameNames.Retarget("nothing here", "Kappa", 5, 2, out swaps) == "nothing here" &&
+                swaps == 0);
+
+            Check("retarget ignores a still emote",
+                EmoteFrameNames.Retarget(chat, "Kappa", 1, 3, out swaps) == chat && swaps == 0);
+
+            Check("retarget wraps out of range frames",
+                EmoteFrameNames.Retarget(chat, "Kappa", 4, 5, out swaps).Contains("Kappa~1"));
+
+            Check("retarget does not touch a longer emote name",
+                EmoteFrameNames.Retarget(Sprite("KappaPride"), "Kappa", 5, 2, out swaps)
+                    .Contains("KappaPride") &&
+                swaps == 0);
+
             Check("a still emote never advances on time",
                 EmoteFrameNames.AdvanceByTime(0, new[] { 100 }, ref due, 99f, 2) == 0);
         }
@@ -272,6 +309,15 @@ namespace ZeepTwitchChat.LogicTests
         private static string Json(string singleQuoted)
         {
             return singleQuoted.Replace('\u0027', '"');
+        }
+
+        /// <summary>
+        /// A sprite tag, built without escaped quotes so the chat fixtures above stay readable.
+        /// </summary>
+        private static string Sprite(string emoteName)
+        {
+            char quote = (char)34;
+            return "<sprite name=" + quote + emoteName + quote + ">";
         }
 
         private static bool SameColour(byte[] rgba, int width, int x, int y,

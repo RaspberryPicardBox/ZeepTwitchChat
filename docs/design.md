@@ -155,6 +155,13 @@ Consequences worth knowing:
 * Frames are only decoded for emotes the provider flags as animated, animated emotes are never
   pre-warmed, and at most `Emotes/MaxAnimatedEmotes` keep frames. Everything else keeps one
   frame, which bounds both memory and the atlas size.
+* The animator sets an **absolute** frame instead of advancing the one it last wrote. The game
+  rebuilds the chat field from its stored lines on every new message (`UpdateChatFields`), which
+  resets a line to frame 0; a counter would then look for a tag that is no longer there and stick
+  forever, while an absolute retarget repairs the line on the next tick.
+* The payload decides what is animated, not the provider's `animated` flag: a GIF with several
+  frames is animated whatever the list claimed. The flag is only used to keep animations out of
+  the pre-warm pass.
 * If a rewrite is ever missed, nothing is corrupted: the next message or the next pass simply
   re-reads the text.
 

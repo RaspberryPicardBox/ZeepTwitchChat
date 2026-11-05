@@ -86,6 +86,10 @@ namespace ZeepTwitchChat.Chat.Emotes
         private string roomId;
         private float lastRebuildTime = -10f;
         private bool loggedReady;
+
+        /// <summary>Decode summaries logged so far, per kind. A chatty log helps nobody.</summary>
+        private int animatedDecodeLogs;
+        private int singleFrameDecodeLogs;
         private bool loggedAnimation;
 
 
@@ -102,7 +106,7 @@ namespace ZeepTwitchChat.Chat.Emotes
 
             if (atlas != null && this.options.AnimateEmotes && this.options.AnimationFramesPerSecond > 0)
             {
-                animator = new EmoteAnimator(atlas, this.options.AnimationFramesPerSecond);
+                animator = new EmoteAnimator(atlas, this.options.AnimationFramesPerSecond, this.log);
             }
         }
 
@@ -236,11 +240,24 @@ namespace ZeepTwitchChat.Chat.Emotes
                 log("Twitch Chat: emote rendering active (" + atlas.RenderableCount + " emote(s) ready).");
             }
 
-            if (!loggedAnimation && animator != null && animator.AnimatedCount > 0)
+            if (!loggedAnimation && animator != null)
             {
-                loggedAnimation = true;
-                log("Twitch Chat: emote animation active (" + animator.AnimatedCount +
-                    " animated emote(s) at " + options.AnimationFramesPerSecond + " fps).");
+                // Asked of the atlas directly: the animator's own count is only refreshed on
+                // its next tick, which can be after this rebuild.
+                List<string> animatedNow = atlas.AnimatedNames();
+                if (animatedNow.Count > 0)
+                {
+                    loggedAnimation = true;
+                    int mostFrames = 0;
+                    for (int i = 0; i < animatedNow.Count; i++)
+                    {
+                        mostFrames = Math.Max(mostFrames, atlas.FrameCount(animatedNow[i]));
+                    }
+
+                    log("Twitch Chat: emote animation active (" + animatedNow.Count +
+                        " animated emote(s), up to " + mostFrames + " frames, " +
+                        options.AnimationFramesPerSecond + " ticks/s).");
+                }
             }
         }
 
@@ -290,15 +307,11 @@ namespace ZeepTwitchChat.Chat.Emotes
         /// </summary>
         private DecodedEmote DecodeGif(string name, byte[] bytes)
         {
-            bool knownAnimated;
-            lock (animatedNames)
-            {
-                knownAnimated = animatedNames.Contains(name);
-            }
-
-            bool animate = options.AnimateEmotes &&
-                animatedEmotes < options.MaxAnimatedEmotes &&
-                knownAnimated;
+            // The payload decides, not the provider's animated flag: a GIF that really has
+            // several frames is animated, whatever a list said about it. The flag is still used
+            // to keep animations out of the pre-warm pass, but a missing or wrong flag can no
+            // longer cost the user their animation.
+            bool animate = options.AnimateEmotes && animatedEmotes < options.MaxAnimatedEmotes;
 
             int maxFrames = animate ? Math.Max(1, options.MaxAnimationFrames) : 1;
 
@@ -346,6 +359,12 @@ namespace ZeepTwitchChat.Chat.Emotes
             if (textures.Count > 1)
             {
                 animatedEmotes++;
+                LogDecode(ref animatedDecodeLogs, name + ": " + textures.Count +
+                    " frame(s), first delay " + delays[0] + "ms");
+            }
+            else
+            {
+                LogDecode(ref singleFrameDecodeLogs, name + ": 1 frame");
             }
 
             return new DecodedEmote(textures, delays);
@@ -380,6 +399,19 @@ namespace ZeepTwitchChat.Chat.Emotes
                     store.Request(name, url);
                 }
             }
+        }
+
+        /// <summary>Logs the first few decodes of each kind: enough to diagnose, not a transcript.</summary>
+        private void LogDecode(ref int logged, string detail)
+        {
+            logged++;
+
+            if (logged > 3)
+            {
+                return;
+            }
+
+            log("Twitch Chat: emote decoded " + detail + ".");
         }
 
         /// <summary>Fetches every enabled provider list once per channel, in the background.</summary>

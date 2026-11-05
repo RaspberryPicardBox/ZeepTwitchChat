@@ -4,6 +4,33 @@ All notable changes to ZeepTwitchChat are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2026-11-05
+
+### Fixed
+
+- **Animated emotes showed only their first frame.** The animation advanced a private frame
+  counter, but Zeepkist keeps its own twenty line buffer and rebuilds the chat field from those
+  stored strings every time a new message arrives. That reset the line to frame 0 while the
+  counter kept moving, so the swap could never match again and the emote stayed still for good
+  in any chat with traffic. The animator now asks for an absolute frame from the emote's own
+  clock and rewrites *any* frame tag to it, so a rebuilt line is corrected on the next tick
+  (checked in the shipped `Zeepkist.dll`: `OnlineChatUI.UpdateChatFields` writes
+  `bigChatField.text` / `smallChatField.text` from `receivedChatList`; `Update` only touches the
+  input boxes).
+- Animated emotes no longer depend on a provider's `animated` flag. A GIF that actually carries
+  several frames is animated, whatever the list said; the flag now only keeps animations out of
+  the pre-warm pass. A missing or wrong flag can no longer cost the animation.
+- The `emote animation active` log line could be skipped entirely: it read the animator's frame
+  list, which is only refreshed on the animator's next tick, so it was empty at the moment the
+  atlas was rebuilt.
+
+### Added
+
+- `emote decoded <name>: N frame(s)` for the first few emotes of each kind, and
+  `emote animation is rewriting the chat text` the first time a frame swap lands. Both only ever
+  print once or twice, and they make a log enough to tell "no frames" from "frames but no
+  rewrite".
+
 ## [1.3.0] - 2026-11-05
 
 ### Added

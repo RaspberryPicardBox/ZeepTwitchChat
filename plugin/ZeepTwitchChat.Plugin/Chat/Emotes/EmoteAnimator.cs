@@ -20,6 +20,7 @@ namespace ZeepTwitchChat.Chat.Emotes
     public sealed class EmoteAnimator
     {
         private readonly EmoteSpriteAsset atlas;
+        private readonly Action<string> log;
         private readonly float interval;
         private readonly Dictionary<string, int> currentFrame = new Dictionary<string, int>(StringComparer.Ordinal);
         private readonly List<string> animated = new List<string>();
@@ -29,15 +30,14 @@ namespace ZeepTwitchChat.Chat.Emotes
 
         private float nextUpdate;
         private int animatedStamp = -1;
+        private bool loggedWrite;
 
-        public EmoteAnimator(EmoteSpriteAsset atlas, int framesPerSecond)
+        public EmoteAnimator(EmoteSpriteAsset atlas, int framesPerSecond, Action<string> log)
         {
             this.atlas = atlas;
+            this.log = log ?? delegate { };
             interval = framesPerSecond > 0 ? 1f / framesPerSecond : 0f;
         }
-
-        /// <summary>Number of animated emotes being played, for the log.</summary>
-        public int AnimatedCount => animated.Count;
 
         /// <summary>Called once per frame; does nothing until the next interval has passed.</summary>
         public void Update(float now)
@@ -61,96 +61,96 @@ namespace ZeepTwitchChat.Chat.Emotes
                 return;
             }
 
-            // One transition list per tick, shared by both chat fields: the lobby and the
-            // in-race field must not advance the same emote twice.
-            List<string> fromTags = new List<string>();
-            List<string> toTags = new List<string>();
+            // One target frame per emote per tick, shared by both chat fields, so the lobby and
+            // the in-race field always show the same frame of the same emote.
+            List<int> targets = new List<int>(names.Length);
             for (int i = 0; i < names.Length; i++)
             {
-                string name = names[i];
-                int[] delays = atlas.FrameDelays(name);
-                if (delays == null || delays.Length <= 1)
-                {
-                    continue;
-                }
-
-                int frame;
-                if (!currentFrame.TryGetValue(name, out frame))
-                {
-                    frame = 0;
-                }
-
-                float due;
-                if (!frameDue.TryGetValue(name, out due))
-                {
-                    // Show frame 0 for its own duration before the first advance.
-                    due = now + Math.Max(20, delays[frame]) / 1000f;
-                }
-                else if (due < now - 1f)
-                {
-                    // After a long hitch, restart from the current frame rather than
-                    // fast-forwarding through a whole animation in one tick.
-                    due = now;
-                }
-
-                int next = EmoteFrameNames.AdvanceByTime(frame, delays, ref due, now, delays.Length);
-                frameDue[name] = due;
-
-                if (next == frame)
-                {
-                    continue;
-                }
-
-                string from = atlas.GetFrameTag(name, frame);
-                string to = atlas.GetFrameTag(name, next);
-
-                if (from == null || to == null || from == to)
-                {
-                    continue;
-                }
-
-                fromTags.Add(from);
-                toTags.Add(to);
-                currentFrame[name] = next;
+                targets.Add(NextFrame(names[i], now));
             }
 
-            if (fromTags.Count == 0)
+            int swaps = 0;
+            swaps += AnimateField(ChatTextTargets.GetLogField(chatUi, false), names, targets);
+            swaps += AnimateField(ChatTextTargets.GetLogField(chatUi, true), names, targets);
+
+            if (!loggedWrite && swaps > 0)
             {
-                return;
+                loggedWrite = true;
+                log("Twitch Chat: emote animation is rewriting the chat text.");
             }
-
-            AnimateField(ChatTextTargets.GetLogField(chatUi, false), fromTags, toTags);
-            AnimateField(ChatTextTargets.GetLogField(chatUi, true), fromTags, toTags);
         }
 
-        private void AnimateField(TMP_Text field, List<string> fromTags, List<string> toTags)
+        /// <summary>
+        /// Absolute frame for an emote at this moment, from the GIF's own delays. Keeping a
+        /// clock rather than "advance what I last saw" is what makes the animation survive the
+        /// game rebuilding the chat text from its stored lines after every new message.
+        /// </summary>
+        private int NextFrame(string name, float now)
+        {
+            int[] delays = atlas.FrameDelays(name);
+            if (delays == null || delays.Length <= 1)
+            {
+                return 0;
+            }
+
+            int frame;
+            if (!currentFrame.TryGetValue(name, out frame))
+            {
+                frame = 0;
+            }
+
+            float due;
+            if (!frameDue.TryGetValue(name, out due))
+            {
+                // Show frame 0 for its own duration before the first advance.
+                due = now + Math.Max(20, delays[frame]) / 1000f;
+            }
+            else if (due < now - 1f)
+            {
+                // After a long hitch, restart from the current frame rather than
+                // fast-forwarding through a whole animation in one tick.
+                due = now;
+            }
+
+            int next = EmoteFrameNames.AdvanceByTime(frame, delays, ref due, now, delays.Length);
+            frameDue[name] = due;
+            currentFrame[name] = next;
+            return next;
+        }
+
+        private int AnimateField(TMP_Text field, string[] names, List<int> targets)
         {
             if (field == null)
             {
-                return;
+                return 0;
             }
 
             string text = field.text;
             if (string.IsNullOrEmpty(text))
             {
-                return;
+                return 0;
             }
 
             string updated = text;
+            int swaps = 0;
 
-            for (int i = 0; i < fromTags.Count; i++)
+            for (int i = 0; i < names.Length; i++)
             {
-                if (updated.IndexOf(fromTags[i], StringComparison.Ordinal) < 0)
+                string name = names[i];
+                int frames = atlas.FrameCount(name);
+                if (frames <= 1)
                 {
                     continue;
                 }
 
-                updated = updated.Replace(fromTags[i], toTags[i]);
+                int count = 0;
+                updated = EmoteFrameNames.Retarget(updated, name, frames, targets[i], out count);
+                swaps += count;
             }
 
-            if (string.Equals(updated, text, StringComparison.Ordinal))
+            if (swaps == 0 || string.Equals(updated, text, StringComparison.Ordinal))
             {
-                return;
+                return 0;
             }
 
             // Assigning text re-parses the line set; the visible window is the game's business
@@ -162,6 +162,8 @@ namespace ZeepTwitchChat.Chat.Emotes
 
             field.firstVisibleCharacter = firstVisible;
             field.maxVisibleCharacters = maxVisible;
+
+            return swaps;
         }
 
         /// <summary>Animated names change when the atlas rebuilds, so they are cached by rebuild.</summary>
