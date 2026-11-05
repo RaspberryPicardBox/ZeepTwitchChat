@@ -180,6 +180,15 @@ tools/package-mod.sh
 Game and BepInEx assemblies are referenced in place via `HintPath` and are never committed
 or redistributed; only `ZeepTwitchChat.dll` is shipped.
 
+## Security
+
+Everything the mod renders comes from the network, so the trust boundaries are written down: no
+dynamic loading, deserialisation, scripting or reflection on attacker-controlled names, no markup
+injection (untrusted text cannot contain `<`, and emote tags are built from generated aliases),
+allow-listed https emote urls, and a hard ceiling on every buffer, list and decoder. The full
+review, including what could still go wrong, is in [docs/security.md](docs/security.md), and it is
+re-checked by the test suite on every build.
+
 ## Verified facts and design notes
 
 Everything this mod relies on was checked against the installed game build rather than

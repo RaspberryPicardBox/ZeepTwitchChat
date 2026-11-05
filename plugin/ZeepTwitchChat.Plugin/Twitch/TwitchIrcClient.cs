@@ -61,6 +61,9 @@ namespace ZeepTwitchChat.Twitch
         private const int MaxBackoffSeconds = 60;
 
         private readonly TwitchIrcOptions options;
+        /// <summary>Largest IRC line the mod will hold; anything longer is skipped.</summary>
+        private const int MaxLineLength = 8192;
+
         private readonly object gate = new object();
 
         private Thread thread;
@@ -251,7 +254,7 @@ namespace ZeepTwitchChat.Twitch
                     streamWriter.WriteLine("JOIN #" + channel);
 
                     string line;
-                    while (running && (line = reader.ReadLine()) != null)
+                    while (running && (line = ReadLineCapped(reader, MaxLineLength)) != null)
                     {
                         if (!HandleLine(line, streamWriter))
                         {
@@ -259,6 +262,53 @@ namespace ZeepTwitchChat.Twitch
                         }
                     }
                 }
+            }
+        }
+
+        /// <summary>
+        /// Reads one line, holding at most <paramref name="maxLength"/> characters. IRC lines
+        /// from Twitch are well under a kilobyte; the cap exists so a misbehaving or hostile
+        /// server cannot make the mod allocate a huge string. An over-long line is consumed to
+        /// its end and returned empty, which the parser then ignores, keeping the stream in
+        /// sync. Returns null only at end of stream.
+        /// </summary>
+        private static string ReadLineCapped(StreamReader reader, int maxLength)
+        {
+            StringBuilder builder = new StringBuilder(256);
+            bool overlong = false;
+
+            while (true)
+            {
+                int value = reader.Read();
+                if (value < 0)
+                {
+                    if (builder.Length == 0)
+                    {
+                        return null;
+                    }
+
+                    return overlong ? string.Empty : builder.ToString();
+                }
+
+                char c = (char)value;
+
+                if (c == (char)10)
+                {
+                    return overlong ? string.Empty : builder.ToString();
+                }
+
+                if (c == (char)13)
+                {
+                    continue;
+                }
+
+                if (builder.Length >= maxLength)
+                {
+                    overlong = true;
+                    continue;
+                }
+
+                builder.Append(c);
             }
         }
 

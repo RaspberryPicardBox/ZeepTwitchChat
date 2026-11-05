@@ -22,7 +22,7 @@ namespace ZeepTwitchChat
     {
         public const string Guid = "com.nyxeonfox.zeepkist.twitchchat";
         public const string PluginName = "Twitch Chat";
-        public const string PluginVersion = "1.3.3";
+        public const string PluginVersion = "1.3.4";
 
         private static ManualLogSource staticLogger;
 
@@ -274,6 +274,21 @@ namespace ZeepTwitchChat
             ApplyConfiguration();
         }
 
+        /// <summary>
+        /// Keeps a config value inside the range the mod is designed for. The config file is the
+        /// user's own, but a typo there should not turn into a huge atlas, a stalled frame or an
+        /// unbounded download.
+        /// </summary>
+        private static int Clamp(int value, int min, int max)
+        {
+            return value < min ? min : (value > max ? max : value);
+        }
+
+        private static float Clamp(float value, float min, float max)
+        {
+            return value < min ? min : (value > max ? max : value);
+        }
+
         private void ApplyConfiguration()
         {
             TwitchIrcClient previousClient = client;
@@ -290,7 +305,7 @@ namespace ZeepTwitchChat
                 LabelColourHex = labelColour.Value,
                 UseTwitchColours = useTwitchColours.Value,
                 ShowBadges = showBadges.Value,
-                MaxMessageLength = maxMessageLength.Value
+                MaxMessageLength = Clamp(maxMessageLength.Value, 0, 400)
             };
 
             EmoteService previousEmotes = emotes;
@@ -302,12 +317,12 @@ namespace ZeepTwitchChat
                     EnableFfz = emoteFfz.Value,
                     EnableSevenTv = emoteSevenTv.Value,
                     AnimateEmotes = emoteAnimate.Value,
-                    AnimationFramesPerSecond = emoteAnimationFps.Value,
-                    MaxAnimationFrames = emoteMaxFrames.Value,
-                    MaxAnimatedEmotes = emoteMaxAnimated.Value,
-                    MaxCachedEmotes = emoteMaxCached.Value,
+                    AnimationFramesPerSecond = Clamp(emoteAnimationFps.Value, 0, 60),
+                    MaxAnimationFrames = Clamp(emoteMaxFrames.Value, 1, 240),
+                    MaxAnimatedEmotes = Clamp(emoteMaxAnimated.Value, 0, 200),
+                    MaxCachedEmotes = Clamp(emoteMaxCached.Value, 16, 2000),
                     PrewarmEmotes = emotePrewarm.Value,
-                    RenderPixels = emoteSize.Value
+                    RenderPixels = Clamp(emoteSize.Value, 8, 128)
                 },
                 message => Logger.LogInfo(message));
 
@@ -322,16 +337,17 @@ namespace ZeepTwitchChat
                 previousDeferred.Clear();
             }
 
-            deferred = renderEmotes.Value && emoteWaitSeconds.Value > 0f
-                ? new DeferredChatQueue(emoteWaitSeconds.Value)
+            float waitSeconds = Clamp(emoteWaitSeconds.Value, 0f, 30f);
+            deferred = renderEmotes.Value && waitSeconds > 0f
+                ? new DeferredChatQueue(waitSeconds)
                 : null;
 
             formatter = new ChatLineFormatter(lineOptions, emotes);
 
             MessageRateLimiter limiter = new MessageRateLimiter(
-                Math.Max(0, maxMessagesPerMinute.Value),
+                Clamp(maxMessagesPerMinute.Value, 0, 600),
                 60d,
-                Math.Max(0d, minimumSecondsBetweenMessages.Value));
+                Clamp(minimumSecondsBetweenMessages.Value, 0f, 60f));
 
             injector = new ChatInjector(limiter, message => Logger.LogInfo(message));
 
@@ -460,7 +476,8 @@ namespace ZeepTwitchChat
             if (!loggedFirstMessage)
             {
                 loggedFirstMessage = true;
-                LogInfo("Twitch Chat: first message received from " + user.Login + ".");
+                LogInfo("Twitch Chat: first message received from " +
+                        ChatLineFormatter.SanitiseText(user.Login, 32) + ".");
             }
         }
     }

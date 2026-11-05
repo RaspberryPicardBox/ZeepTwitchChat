@@ -4,6 +4,34 @@ All notable changes to ZeepTwitchChat are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.4] - 2026-11-05
+
+### Security
+
+A full review of what network input can do, written up in [docs/security.md](docs/security.md).
+No code execution path was found, and the findings below were closed anyway:
+
+- **Emote urls are now validated.** Twitch emote ids come off the IRC tag and 7TV supplies a
+  per-emote host in its json, so urls were only as trustworthy as the remote data: a `file://`
+  uri would have made `WebRequest` read a local file. Urls must now be https, on an allow-listed
+  host for that purpose, without user info, fragment or `..`, and redirects are disabled.
+- **Every growth point has a ceiling:** IRC lines (8 KiB, longer ones skipped rather than
+  buffered), provider lists (8 MiB), emote images (4 MiB), GIF frames and decoded pixels, and a
+  5000 entry cap on remembered emote names (the IRC emotes tag lets a hostile server invent a name
+  per message).
+- **Config values are clamped** into the ranges the mod is designed for, so a typo cannot become a
+  huge atlas or a stalled frame.
+- **Invisible characters are stripped** from untrusted text: bidirectional overrides, zero width
+  joiners and the byte order mark could make one name render as another.
+- Log lines no longer include a raw login straight off the wire.
+
+### Added
+
+- A security section in the test suite: a hostile corpus (TMP tag injection in the message, the
+  display name, the label and the colour) is rendered and every tag in the result is checked
+  against the exact set this mod can produce, plus url policy checks for `file://`, `http://`,
+  unknown hosts, `user@host` tricks, traversal, `javascript:` and `data:` uris.
+
 ## [1.3.3] - 2026-11-05
 
 ### Fixed

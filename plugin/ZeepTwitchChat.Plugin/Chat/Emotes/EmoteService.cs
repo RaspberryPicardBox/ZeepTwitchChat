@@ -67,6 +67,16 @@ namespace ZeepTwitchChat.Chat.Emotes
     {
         private const float RebuildInterval = 0.5f;
 
+        /// <summary>Ceiling on a provider list response (a busy 7TV channel set is ~2.4 MB).</summary>
+        private const int MaxJsonCharacters = 8 * 1024 * 1024;
+
+        /// <summary>
+        /// Ceiling on remembered emote names. Provider lists are bounded, but the IRC emotes tag
+        /// lets a hostile server introduce a new name on every message, so the registry needs a
+        /// cap of its own; past it, unknown names simply stay text.
+        /// </summary>
+        private const int MaxKnownNames = 5000;
+
         private readonly EmoteOptions options;
         private readonly Action<string> log;
         private readonly EmoteSpriteAsset atlas;
@@ -188,7 +198,19 @@ namespace ZeepTwitchChat.Chat.Emotes
                         continue;
                     }
 
+                    // The id comes straight off the IRC tag; Twitch ids are numeric.
+                    if (!EmoteUrlPolicy.IsSafeId(span.Id))
+                    {
+                        continue;
+                    }
+
                     url = EmoteUrls.Twitch(span.Id);
+
+                    if (knownUrls.Count >= MaxKnownNames)
+                    {
+                        continue;
+                    }
+
                     knownUrls[span.Name] = url;
                 }
 
@@ -498,6 +520,11 @@ namespace ZeepTwitchChat.Chat.Emotes
 
                     foreach (KeyValuePair<string, string> emote in emotes.Urls)
                     {
+                        if (knownUrls.Count >= MaxKnownNames)
+                        {
+                            break;
+                        }
+
                         if (knownUrls.TryAdd(emote.Key, urlBuilder(emote.Value)))
                         {
                             added++;
@@ -556,7 +583,14 @@ namespace ZeepTwitchChat.Chat.Emotes
             json = null;
             notFound = false;
 
-            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
+            // Lists are only read from the provider APIs, over https.
+            if (!EmoteUrlPolicy.TryNormalise(url, EmoteUrlKind.Api, out Uri uri))
+            {
+                return false;
+            }
+
+            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(uri);
+            request.AllowAutoRedirect = false;
             request.UserAgent = "ZeepTwitchChat/1.2 (+https://mod.io/g/zeepkist)";
             request.Accept = "application/json";
             request.Timeout = 10000;
@@ -575,7 +609,29 @@ namespace ZeepTwitchChat.Chat.Emotes
 
                     using (StreamReader reader = new StreamReader(stream))
                     {
-                        json = reader.ReadToEnd();
+                        char[] chunk = new char[16384];
+                        System.Text.StringBuilder builder =
+                            new System.Text.StringBuilder(MaxJsonCharacters);
+
+                        while (true)
+                        {
+                            int read = reader.Read(chunk, 0, chunk.Length);
+                            if (read <= 0)
+                            {
+                                break;
+                            }
+
+                            // 7TV channel sets reach a couple of megabytes; this is a ceiling
+                            // on a hostile or runaway response, not a working limit.
+                            if (builder.Length + read > MaxJsonCharacters)
+                            {
+                                return false;
+                            }
+
+                            builder.Append(chunk, 0, read);
+                        }
+
+                        json = builder.ToString();
                         return true;
                     }
                 }

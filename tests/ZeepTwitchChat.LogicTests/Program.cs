@@ -43,6 +43,7 @@ namespace ZeepTwitchChat.LogicTests
             EmoteFrameChecks();
             SevenTvChecks();
             NameChecks();
+            SecurityChecks();
             DeferredQueueChecks();
 
             Console.WriteLine();

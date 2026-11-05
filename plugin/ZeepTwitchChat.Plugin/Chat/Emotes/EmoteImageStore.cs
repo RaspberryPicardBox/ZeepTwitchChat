@@ -18,6 +18,13 @@ namespace ZeepTwitchChat.Chat.Emotes
         private const int MaxConcurrent = 3;
         private const int TimeoutMilliseconds = 10000;
 
+        /// <summary>
+        /// Largest image the mod will accept. Twitch emotes peak around 112px and animated GIFs
+        /// at a few hundred kilobytes, so this is generous; it exists so a hostile or broken
+        /// response cannot exhaust memory.
+        /// </summary>
+        private const int MaxImageBytes = 4 * 1024 * 1024;
+
         private readonly object gate = new object();
         private readonly Dictionary<string, bool> requested = new Dictionary<string, bool>(StringComparer.Ordinal);
         private readonly Queue<KeyValuePair<string, string>> queue = new Queue<KeyValuePair<string, string>>();
@@ -42,6 +49,12 @@ namespace ZeepTwitchChat.Chat.Emotes
         public void Request(string name, string url)
         {
             if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(url))
+            {
+                return;
+            }
+
+            // Only the provider CDNs, over https: ids and 7TV host urls come from remote data.
+            if (!EmoteUrlPolicy.IsAllowed(url, EmoteUrlKind.Image))
             {
                 return;
             }
@@ -170,8 +183,14 @@ namespace ZeepTwitchChat.Chat.Emotes
 
         private static byte[] Fetch(string url)
         {
-            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
-            request.UserAgent = "ZeepTwitchChat/1.1 (+https://mod.io/g/zeepkist)";
+            if (!EmoteUrlPolicy.TryNormalise(url, EmoteUrlKind.Image, out Uri uri))
+            {
+                return null;
+            }
+
+            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(uri);
+            request.UserAgent = "ZeepTwitchChat/1.3 (+https://mod.io/g/zeepkist)";
+            request.AllowAutoRedirect = false;
             request.Timeout = TimeoutMilliseconds;
             request.ReadWriteTimeout = TimeoutMilliseconds;
             request.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
@@ -184,10 +203,34 @@ namespace ZeepTwitchChat.Chat.Emotes
                     return null;
                 }
 
-                using (MemoryStream buffer = new MemoryStream())
+                return ReadCapped(stream, MaxImageBytes);
+            }
+        }
+
+        /// <summary>
+        /// Reads at most <paramref name="limit"/> bytes and gives up beyond that, so a huge or
+        /// endless response cannot grow the heap.
+        /// </summary>
+        private static byte[] ReadCapped(Stream stream, int limit)
+        {
+            byte[] chunk = new byte[16384];
+
+            using (MemoryStream buffer = new MemoryStream())
+            {
+                while (true)
                 {
-                    stream.CopyTo(buffer);
-                    return buffer.ToArray();
+                    int read = stream.Read(chunk, 0, chunk.Length);
+                    if (read <= 0)
+                    {
+                        return buffer.ToArray();
+                    }
+
+                    if (buffer.Length + read > limit)
+                    {
+                        return null;
+                    }
+
+                    buffer.Write(chunk, 0, read);
                 }
             }
         }

@@ -146,8 +146,9 @@ namespace ZeepTwitchChat.Chat
 
                 char c = message[i];
 
-                // Angle brackets would let a chatter inject TextMeshPro markup.
-                if (c == '<' || c == '>')
+                // Angle brackets would let a chatter inject TextMeshPro markup; bidi overrides
+                // and zero width characters would let one spoof another player's name.
+                if (c == '<' || c == '>' || IsInvisibleFormatting(c))
                 {
                     continue;
                 }
@@ -296,6 +297,19 @@ namespace ZeepTwitchChat.Chat
             return SanitiseText(text, maxLength);
         }
 
+        /// <summary>
+        /// True for characters that cannot be seen but do change what is displayed: bidirectional
+        /// overrides and isolates, zero width joiners and spaces, and the byte order mark. They
+        /// cannot inject markup, but they can make one name render as another.
+        /// </summary>
+        private static bool IsInvisibleFormatting(char c)
+        {
+            return (c >= (char)0x200B && c <= (char)0x200F) ||
+                   (c >= (char)0x202A && c <= (char)0x202E) ||
+                   (c >= (char)0x2066 && c <= (char)0x2069) ||
+                   c == (char)0xFEFF;
+        }
+
         /// <summary>Sanitises any untrusted fragment (message body, display name, label).</summary>
         public static string SanitiseText(string text, int maxLength)
         {
@@ -314,7 +328,7 @@ namespace ZeepTwitchChat.Chat
                 // Newlines and tabs become a single space so words stay separated; every
                 // other control character is dropped. Angle brackets are removed outright so
                 // the chatter cannot inject TextMeshPro tags.
-                if (c == '<' || c == '>')
+                if (c == '<' || c == '>' || IsInvisibleFormatting(c))
                 {
                     continue;
                 }

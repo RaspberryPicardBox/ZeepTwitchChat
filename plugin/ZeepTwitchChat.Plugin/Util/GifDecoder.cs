@@ -16,6 +16,15 @@ namespace ZeepTwitchChat.Util
     {
         private const int MaxPixels = 512 * 512;
 
+        /// <summary>Ceiling on frames decoded from one file, whatever the caller asks for.</summary>
+        private const int MaxFrames = 512;
+
+        /// <summary>
+        /// Ceiling on the pixels held for one file (frames * width * height * 4 bytes). A small
+        /// file can describe a lot of frames, so the frame count alone is not enough.
+        /// </summary>
+        private const long MaxDecodedBytes = 32L * 1024 * 1024;
+
         /// <summary>One decoded frame, already composited onto the full canvas.</summary>
         public sealed class GifFrame
         {
@@ -49,7 +58,8 @@ namespace ZeepTwitchChat.Util
 
             try
             {
-                return Decode(data, maxFrames <= 0 ? 1 : maxFrames, frames);
+                int limit = maxFrames <= 0 ? 1 : Math.Min(maxFrames, MaxFrames);
+                return Decode(data, limit, frames);
             }
             catch (Exception)
             {
@@ -146,6 +156,11 @@ namespace ZeepTwitchChat.Util
 
                 Composite(canvas, width, height, indices, frameWidth, frameHeight,
                     left, top, colourTable, transparentIndex);
+
+                if ((long)frames.Count * width * height * 4 > MaxDecodedBytes)
+                {
+                    return false;
+                }
 
                 frames.Add(new GifFrame
                 {
