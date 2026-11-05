@@ -39,6 +39,7 @@ namespace ZeepTwitchChat.LogicTests
             RateLimiterChecks();
             JsonChecks();
             EmoteChecks();
+            DeferredQueueChecks();
 
             Console.WriteLine();
             Console.WriteLine(checks + " checks, " + failures + " failure(s).");
@@ -427,6 +428,65 @@ namespace ZeepTwitchChat.LogicTests
             }
 
             return builder.Append(']').ToString();
+        }
+
+        // ---------------------------------------------------------------- deferred queue
+
+        private static void DeferredQueueChecks()
+        {
+            Console.WriteLine();
+            Console.WriteLine("Deferred chat queue");
+
+            TwitchChatUser user = new TwitchChatUser("viewer", "Viewer", null, new List<string>());
+            List<EmoteSpan> spans = TwitchEmoteTagParser.Parse("25:0-4", "Kappa hi");
+            List<DeferredChatQueue.PendingLine> ready = new List<DeferredChatQueue.PendingLine>();
+
+            // Ready immediately: released on the first take.
+            DeferredChatQueue queue = new DeferredChatQueue(3f);
+            queue.Add(user, "Kappa hi", spans, 0d);
+            ready.Clear();
+            queue.Take(0d, name => true, ready);
+            Check("ready emote line released immediately", ready.Count == 1 && queue.Count == 0);
+
+            // Not ready: held, then released when the wait budget expires.
+            queue.Add(user, "Kappa hi", spans, 10d);
+            ready.Clear();
+            queue.Take(11d, name => false, ready);
+            Check("unready emote line held", ready.Count == 0 && queue.Count == 1);
+
+            ready.Clear();
+            queue.Take(13.5d, name => false, ready);
+            Check("held line released on timeout", ready.Count == 1 && queue.Count == 0);
+
+            // Becomes ready part way through the wait.
+            queue.Add(user, "Kappa hi", spans, 20d);
+            ready.Clear();
+            queue.Take(20.5d, name => false, ready);
+            Check("held while downloading", ready.Count == 0);
+
+            ready.Clear();
+            queue.Take(21d, name => true, ready);
+            Check("released as soon as the emote is drawable", ready.Count == 1);
+
+            // Order is preserved: oldest first.
+            DeferredChatQueue ordered = new DeferredChatQueue(0f);
+            ordered.Add(user, "first", spans, 0d);
+            ordered.Add(user, "second", null, 0.1d);
+            ordered.Add(user, "third", null, 0.2d);
+            ready.Clear();
+            ordered.Take(1d, name => true, ready);
+            Check("released oldest first", ready.Count == 3 &&
+                                           ready[0].Text == "first" &&
+                                           ready[2].Text == "third", ready.Count.ToString());
+
+            // A burst cannot grow without bound.
+            DeferredChatQueue bounded = new DeferredChatQueue(60f);
+            for (int i = 0; i < 40; i++)
+            {
+                bounded.Add(user, "line " + i, spans, i);
+            }
+
+            Check("backlog is bounded", bounded.Count == 20, bounded.Count.ToString());
         }
 
         // ---------------------------------------------------------------- provider probe

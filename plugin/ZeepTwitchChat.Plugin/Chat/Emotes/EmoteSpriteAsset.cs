@@ -60,6 +60,9 @@ namespace ZeepTwitchChat.Chat.Emotes
         /// <summary>Number of emote names TMP can currently resolve.</summary>
         public int RenderableCount => renderable.Count;
 
+        /// <summary>True when new emotes are waiting to be packed into the atlas.</summary>
+        public bool IsDirty => dirty;
+
         /// <summary>
         /// Re-attaches the current asset to the chat fields. Cheap and idempotent; called each
         /// frame so a lobby joined after the first rebuild still gets emotes.

@@ -22,7 +22,7 @@ namespace ZeepTwitchChat
     {
         public const string Guid = "com.nyxeonfox.zeepkist.twitchchat";
         public const string PluginName = "Twitch Chat";
-        public const string PluginVersion = "1.1.1";
+        public const string PluginVersion = "1.2.0";
 
         private static ManualLogSource staticLogger;
 
@@ -46,11 +46,18 @@ namespace ZeepTwitchChat
         private ConfigEntry<bool> emoteBttv;
         private ConfigEntry<bool> emoteFfz;
         private ConfigEntry<int> emoteMaxCached;
+        private ConfigEntry<float> emoteWaitSeconds;
+        private ConfigEntry<bool> emotePrewarm;
         private ConfigEntry<int> emoteSize;
 
         private ChatInjector injector;
         private TwitchIrcClient client;
         private EmoteService emotes;
+        private DeferredChatQueue deferred;
+        private readonly List<DeferredChatQueue.PendingLine> readyLines = new List<DeferredChatQueue.PendingLine>();
+        private static readonly System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
+        private float lastTimeoutLogTime = -30f;
+        private int timeoutLogCount;
         private volatile ChatLineFormatter formatter;
         private bool loggedFirstMessage;
 
@@ -116,7 +123,41 @@ namespace ZeepTwitchChat
             {
                 activeEmotes.Update();
             }
+
+            ReleaseDeferredLines();
         }
+
+        /// <summary>
+        /// Posts lines that were held back for their emote images. Called every frame on the
+        /// main thread; the queue is empty unless an emote was still downloading.
+        /// </summary>
+        private void ReleaseDeferredLines()
+        {
+            DeferredChatQueue activeDeferred = deferred;
+            ChatLineFormatter activeFormatter = formatter;
+            ChatInjector activeInjector = injector;
+            if (activeDeferred == null || activeFormatter == null || activeInjector == null)
+            {
+                return;
+            }
+
+            EmoteService activeEmotes = emotes;
+            readyLines.Clear();
+            activeDeferred.Take(Now, name => activeEmotes != null && activeEmotes.IsRenderable(name), readyLines);
+
+            for (int i = 0; i < readyLines.Count; i++)
+            {
+                DeferredChatQueue.PendingLine line = readyLines[i];
+                activeInjector.Enqueue(activeFormatter.Format(line.User, line.Text, line.Spans));
+
+                if (HasUnreadyEmote(line.Spans, activeEmotes))
+                {
+                    LogTimedOutLine();
+                }
+            }
+        }
+
+        private static double Now => clock.Elapsed.TotalSeconds;
 
         private void BindConfiguration()
         {
@@ -186,6 +227,15 @@ namespace ZeepTwitchChat
             emoteMaxCached = Config.Bind("Emotes", "MaxCachedEmotes", 200,
                 "Upper bound on emotes downloaded and kept in the atlas for this session.");
 
+            emoteWaitSeconds = Config.Bind("Emotes", "EmoteWaitSeconds", 3f,
+                "How long a line may wait for its emote images before being posted with the " +
+                "emote's text name instead. The game stores the rendered text, so first use of " +
+                "an emote needs this window to show the image. 0 disables waiting.");
+
+            emotePrewarm = Config.Bind("Emotes", "PrewarmEmotes", true,
+                "Download BetterTTV and FrankerFaceZ emote images in the background after " +
+                "connecting, so their first use is instant. Uses a little bandwidth and memory.");
+
             emoteSize = Config.Bind("Emotes", "EmoteSize", 24,
                 "Rendered emote size in pixels. The chat font is roughly 24px at 1080p; raise " +
                 "this if emotes look small, lower it if they crowd the line.");
@@ -225,6 +275,7 @@ namespace ZeepTwitchChat
                     EnableBttv = emoteBttv.Value,
                     EnableFfz = emoteFfz.Value,
                     MaxCachedEmotes = emoteMaxCached.Value,
+                    PrewarmEmotes = emotePrewarm.Value,
                     RenderPixels = emoteSize.Value
                 },
                 message => Logger.LogInfo(message));
@@ -233,6 +284,16 @@ namespace ZeepTwitchChat
             {
                 previousEmotes.Dispose();
             }
+
+            DeferredChatQueue previousDeferred = deferred;
+            if (previousDeferred != null)
+            {
+                previousDeferred.Clear();
+            }
+
+            deferred = renderEmotes.Value && emoteWaitSeconds.Value > 0f
+                ? new DeferredChatQueue(emoteWaitSeconds.Value)
+                : null;
 
             formatter = new ChatLineFormatter(lineOptions, emotes);
 
@@ -291,6 +352,44 @@ namespace ZeepTwitchChat
             }
         }
 
+        /// <summary>
+        /// Records a line that was posted with at least one emote still unavailable. Throttled:
+        /// chat can be busy and this is a support signal, not a message log.
+        /// </summary>
+        private void LogTimedOutLine()
+        {
+            timeoutLogCount++;
+
+            float now = (float)Now;
+            if (now - lastTimeoutLogTime < 10f)
+            {
+                return;
+            }
+
+            lastTimeoutLogTime = now;
+            Logger.LogInfo("Twitch Chat: " + timeoutLogCount + " line(s) posted with an emote still " +
+                           "downloading. Raise Emotes/EmoteWaitSeconds if that happens often.");
+            timeoutLogCount = 0;
+        }
+
+        private static bool HasUnreadyEmote(IReadOnlyList<EmoteSpan> spans, EmoteService activeEmotes)
+        {
+            if (activeEmotes == null)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < spans.Count; i++)
+            {
+                if (!activeEmotes.IsRenderable(spans[i].Name))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         /// <summary>Raised on the IRC background thread: format the line, then hand it to the injector.</summary>
         private void OnTwitchMessage(TwitchChatUser user, string text, IReadOnlyList<EmoteSpan> spans)
         {
@@ -305,6 +404,15 @@ namespace ZeepTwitchChat
             if (activeEmotes != null)
             {
                 activeEmotes.OnMessage(spans);
+            }
+
+            DeferredChatQueue activeDeferred = deferred;
+            if (activeDeferred != null && spans != null && spans.Count > 0 && HasUnreadyEmote(spans, activeEmotes))
+            {
+                // The game keeps the rendered string, so wait for the images instead of
+                // writing the emote's text name permanently into the chat buffer.
+                activeDeferred.Add(user, text, spans, Now);
+                return;
             }
 
             activeInjector.Enqueue(activeFormatter.Format(user, text, spans));

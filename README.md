@@ -106,6 +106,8 @@ Changes are applied immediately: the mod reconnects with the new settings.
 | Emotes | `EnableFfz` | `true` | Resolve FrankerFaceZ emotes (global and channel) |
 | Emotes | `MaxCachedEmotes` | `200` | Upper bound on images downloaded per session |
 | Emotes | `EmoteSize` | `24` | Rendered emote size in pixels (chat text is ~24px at 1080p) |
+| Emotes | `EmoteWaitSeconds` | `3` | How long a line may wait for its emote images before posting with the text name; `0` never waits |
+| Emotes | `PrewarmEmotes` | `true` | Pre-download BetterTTV/FFZ emote images so first use is instant |
 | Advanced | `IrcHost` | `irc.chat.twitch.tv` | Twitch IRC host |
 | Advanced | `IrcPort` | `6697` | `6697` = TLS, `6667` = plain text |
 | Advanced | `UseTls` | `true` | Encrypt the connection |
@@ -126,9 +128,12 @@ Changes are applied immediately: the mod reconnects with the new settings.
   already public. TLS is on by default; the certificate-tolerance option exists only
   because Mono's trust store inside Proton prefixes is often stale.
 - **Emotes appear as they arrive.** Each new emote name is downloaded once, then drawn from a
-  single runtime sprite atlas. Until an image is ready the emote shows as text, so a slow
-  connection degrades to plain names rather than blank space. If emotes look too small or too
-  large for your resolution, change `Emotes/EmoteSize`.
+  single runtime sprite atlas. Because Zeepkist stores the *rendered* text of a chat line, a
+  line that is written before its emote image arrives keeps the emote's name forever — so
+  emote lines are held for up to `EmoteWaitSeconds` (3 by default) while the image downloads,
+  then posted with whatever is available. With `PrewarmEmotes` on, BetterTTV/FFZ emotes are
+  already cached and never wait. If emotes look too small or too large for your resolution,
+  change `Emotes/EmoteSize`.
 
 ## Troubleshooting
 

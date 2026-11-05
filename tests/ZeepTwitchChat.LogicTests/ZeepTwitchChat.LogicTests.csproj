@@ -33,6 +33,7 @@
     <Compile Include="../../plugin/ZeepTwitchChat.Plugin/Chat/ChatLineFormatter.cs" />
     <Compile Include="../../plugin/ZeepTwitchChat.Plugin/Chat/EmoteTagProvider.cs" />
     <Compile Include="../../plugin/ZeepTwitchChat.Plugin/Chat/MessageRateLimiter.cs" />
+    <Compile Include="../../plugin/ZeepTwitchChat.Plugin/Chat/DeferredChatQueue.cs" />
     <Compile Include="../../plugin/ZeepTwitchChat.Plugin/Chat/Emotes/EmoteProviderParsers.cs" />
   </ItemGroup>
 

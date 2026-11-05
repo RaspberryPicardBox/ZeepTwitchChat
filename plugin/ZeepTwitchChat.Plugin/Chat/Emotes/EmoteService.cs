@@ -17,6 +17,10 @@ namespace ZeepTwitchChat.Chat.Emotes
         public bool EnableFfz = true;
         public int MaxCachedEmotes = 200;
 
+        /// <summary>Download provider-listed emotes in the background so first use is instant.</summary>
+
+        public bool PrewarmEmotes = true;
+
         /// <summary>Rendered emote size in pixels; the chat font is roughly 24px at 1080p.</summary>
         public int RenderPixels = 24;
     }
@@ -31,7 +35,7 @@ namespace ZeepTwitchChat.Chat.Emotes
     /// </summary>
     public sealed class EmoteService : IEmoteTagProvider, IDisposable
     {
-        private const float RebuildInterval = 1.5f;
+        private const float RebuildInterval = 0.5f;
 
         private readonly EmoteOptions options;
         private readonly Action<string> log;
@@ -41,10 +45,11 @@ namespace ZeepTwitchChat.Chat.Emotes
             new ConcurrentDictionary<string, string>(StringComparer.Ordinal);
 
         private readonly HashSet<string> fetchedUrls = new HashSet<string>(StringComparer.Ordinal);
+        private readonly Queue<string> prewarmQueue = new Queue<string>();
 
         private string channel;
         private string roomId;
-        private float lastRebuildTime;
+        private float lastRebuildTime = -10f;
         private bool loggedReady;
 
         public EmoteService(EmoteOptions options, Action<string> log)
@@ -61,6 +66,12 @@ namespace ZeepTwitchChat.Chat.Emotes
 
         /// <summary>Number of emotes that can currently be rendered as sprites.</summary>
         public int RenderableCount => atlas == null ? 0 : atlas.Count;
+
+        /// <summary>True when this emote can currently be drawn as a sprite.</summary>
+        public bool IsRenderable(string emoteName)
+        {
+            return atlas != null && atlas.GetSpriteTag(emoteName) != null;
+        }
 
         /// <summary>Sprite tag for an emote, or null when it is not renderable yet.</summary>
         public string GetSpriteTag(string emoteName)
@@ -141,7 +152,7 @@ namespace ZeepTwitchChat.Chat.Emotes
             // A lobby can be joined after the first rebuild, so keep the attachment fresh.
             atlas.EnsureAttached();
 
-            bool decodedAny = false;
+            DrainPrewarm();
 
             // A few per frame: enough to fill quickly, few enough not to hitch the game.
             for (int guard = 0; guard < 4; guard++)
@@ -173,11 +184,12 @@ namespace ZeepTwitchChat.Chat.Emotes
                 }
 
                 atlas.Add(name, texture);
-                decodedAny = true;
             }
 
+            // Rebuild on a timer rather than only on frames that decoded an image: with a
+            // single late download the atlas would otherwise stay stale until the next one.
             float now = Time.realtimeSinceStartup;
-            if (!decodedAny || now - lastRebuildTime < RebuildInterval)
+            if (!atlas.IsDirty || now - lastRebuildTime < RebuildInterval)
             {
                 return;
             }
@@ -189,6 +201,37 @@ namespace ZeepTwitchChat.Chat.Emotes
             {
                 loggedReady = true;
                 log("Twitch Chat: emote rendering active (" + atlas.RenderableCount + " emote(s) ready).");
+            }
+        }
+
+        /// <summary>
+        /// Requests a few pre-listed emotes per frame. Keeps first use of a BTTV/FFZ emote
+        /// instant without hammering the network when the lists arrive.
+        /// </summary>
+        private void DrainPrewarm()
+        {
+            if (!options.PrewarmEmotes || !store.AcceptsMore)
+            {
+                return;
+            }
+
+            for (int i = 0; i < 4; i++)
+            {
+                string name;
+                lock (prewarmQueue)
+                {
+                    if (prewarmQueue.Count == 0)
+                    {
+                        return;
+                    }
+
+                    name = prewarmQueue.Dequeue();
+                }
+
+                if (knownUrls.TryGetValue(name, out string url))
+                {
+                    store.Request(name, url);
+                }
             }
         }
 
@@ -251,6 +294,20 @@ namespace ZeepTwitchChat.Chat.Emotes
                         if (knownUrls.TryAdd(emote.Key, urlBuilder(emote.Value)))
                         {
                             added++;
+                        }
+                    }
+
+                    if (options.PrewarmEmotes)
+                    {
+                        lock (prewarmQueue)
+                        {
+                            foreach (string name in emotes.Keys)
+                            {
+                                if (prewarmQueue.Count < this.options.MaxCachedEmotes)
+                                {
+                                    prewarmQueue.Enqueue(name);
+                                }
+                            }
                         }
                     }
 

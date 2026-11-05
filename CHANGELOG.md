@@ -4,6 +4,28 @@ All notable changes to ZeepTwitchChat are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-11-05
+
+### Fixed
+
+- **First use of an emote still showed its text name.** The sprite pipeline was working
+  (`source=EmojiOne; shader=TextMeshPro/Sprite`, glyphs resolvable, asset attached), but a line
+  is formatted the moment it arrives, while the emote image still needs a few hundred
+  milliseconds — and Zeepkist stores the *rendered string* in its twenty-line buffer, so that
+  line kept the plain name for as long as it was on screen. Emote-bearing lines are now held
+  until their images are drawable, or until `Emotes/EmoteWaitSeconds` expires.
+
+### Added
+
+- `Emotes/EmoteWaitSeconds` (default `3`): how long a line may wait for its emote images. `0`
+  restores the old behaviour of writing the name immediately.
+- `Emotes/PrewarmEmotes` (default `true`): downloads BetterTTV and FrankerFaceZ emote images in
+  the background after connecting (a few per frame), so their first use needs no wait. Native
+  Twitch emotes cannot be pre-warmed — their ids are only known from the messages themselves —
+  so those rely on the wait window.
+- `DeferredChatQueue` with unit tests: release-when-ready, release-on-timeout, oldest-first
+  ordering, and a bounded backlog of 20 lines.
+
 ## [1.1.1] - 2026-11-05
 
 ### Fixed
