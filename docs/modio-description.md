@@ -48,9 +48,9 @@ read-only over Twitch's IRC interface, encrypted with TLS.
 
 - Colour-coded, labelled lines in the game's own chat window
 - Twitch colours and moderator/subscriber/VIP/host badges
-- **Emotes drawn as images**: native Twitch emotes, plus BetterTTV and FrankerFaceZ (global
-  and channel). Each is downloaded on first use; anything that is not a PNG (animated, and
-  all of 7TV) keeps its text name instead of leaving a gap
+- **Emotes drawn as images, animated ones included**: native Twitch emotes, plus BetterTTV,
+  FrankerFaceZ and 7TV (global and channel). Each is downloaded on first use; animated 7TV and
+  BetterTTV emotes play as animations
 - Rate limiting and truncation so a busy channel cannot flood the 20-line chat buffer
 - Automatic reconnection
 - Everything configurable in-game (Configuration Manager) or in the config file

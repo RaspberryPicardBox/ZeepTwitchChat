@@ -13,7 +13,7 @@ namespace ZeepTwitchChat.LogicTests
     /// Dependency-free checks for the plugin's pure logic, plus a live probe against
     /// Twitch IRC. Exit code 0 = every check passed.
     /// </summary>
-    internal static class Program
+    internal static partial class Program
     {
         private static int checks;
         private static int failures;
@@ -39,6 +39,9 @@ namespace ZeepTwitchChat.LogicTests
             RateLimiterChecks();
             JsonChecks();
             EmoteChecks();
+            GifChecks();
+            EmoteFrameChecks();
+            SevenTvChecks();
             DeferredQueueChecks();
 
             Console.WriteLine();
@@ -331,26 +334,26 @@ namespace ZeepTwitchChat.LogicTests
             Check("empty tag yields none", TwitchEmoteTagParser.Parse(null, "Kappa").Count == 0);
 
             // --- provider response parsing -------------------------------------------
-            Dictionary<string, string> bttv = EmoteProviderParsers.ParseBttv(
+            EmoteList bttv = EmoteProviderParsers.ParseBttv(
                 "[{\"id\":\"aaa\",\"code\":\"PogU\"},{\"id\":\"bbb\",\"code\":\"catJAM\"}]");
-            Check("bttv global", bttv.Count == 2 && bttv["PogU"] == "aaa");
+            Check("bttv global", bttv.Urls.Count == 2 && bttv.Urls["PogU"] == "aaa");
 
-            Dictionary<string, string> bttvChannel = EmoteProviderParsers.ParseBttv(
+            EmoteList bttvChannel = EmoteProviderParsers.ParseBttv(
                 "{\"id\":\"x\",\"emotes\":[{\"id\":\"e1\",\"code\":\"ChanA\"}]," +
                 "\"sharedEmotes\":[{\"id\":\"e2\",\"code\":\"SharedB\"}]}");
-            Check("bttv channel", bttvChannel.Count == 2 && bttvChannel["SharedB"] == "e2");
+            Check("bttv channel", bttvChannel.Urls.Count == 2 && bttvChannel.Urls["SharedB"] == "e2");
 
-            Dictionary<string, string> ffz = EmoteProviderParsers.ParseFfz(
+            EmoteList ffz = EmoteProviderParsers.ParseFfz(
                 "{\"sets\":{\"1\":{\"emoticons\":[{\"id\":12345,\"name\":\"FFZEmote\"}]}}}");
-            Check("ffz numeric id", ffz.Count == 1 && ffz["FFZEmote"] == "12345");
+            Check("ffz numeric id", ffz.Urls.Count == 1 && ffz.Urls["FFZEmote"] == "12345");
 
             Check("unsafe provider name dropped",
-                EmoteProviderParsers.ParseBttv("[{\"id\":\"x\",\"code\":\"bad<name>\"}]").Count == 0);
-            Check("non-png bttv emote dropped",
+                EmoteProviderParsers.ParseBttv("[{\"id\":\"x\",\"code\":\"bad<name>\"}]").Urls.Count == 0);
+            Check("webp bttv emote dropped, png kept",
                 EmoteProviderParsers.ParseBttv(
                     "[{\"id\":\"a\",\"code\":\"WebpOne\",\"imageType\":\"webp\"}," +
-                    "{\"id\":\"b\",\"code\":\"PngOne\",\"imageType\":\"png\"}]").Count == 1);
-            Check("garbage provider json", EmoteProviderParsers.ParseBttv("not json").Count == 0);
+                    "{\"id\":\"b\",\"code\":\"PngOne\",\"imageType\":\"png\"}]").Urls.Count == 1);
+            Check("garbage provider json", EmoteProviderParsers.ParseBttv("not json").Urls.Count == 0);
 
             // --- formatter substitution ----------------------------------------------
             ChatLineOptions options = new ChatLineOptions();
@@ -505,6 +508,9 @@ namespace ZeepTwitchChat.LogicTests
                 EmoteProviderParsers.ParseBttv, EmoteUrls.Bttv);
             failures += CheckProvider("FFZ global", "https://api.frankerfacez.com/v1/set/global",
                 EmoteProviderParsers.ParseFfz, EmoteUrls.Ffz);
+            failures += CheckProvider("7TV global", "https://7tv.io/v3/emote-sets/global",
+                EmoteProviderParsers.ParseSevenTv, url => url);
+            failures += CheckAnimatedEmoteRoundTrip();
 
             Console.WriteLine();
             Console.WriteLine("provider probe: " + failures + " failure(s).");
@@ -514,7 +520,7 @@ namespace ZeepTwitchChat.LogicTests
         private static int CheckProvider(
             string label,
             string url,
-            Func<string, Dictionary<string, string>> parser,
+            Func<string, EmoteList> parser,
             Func<string, string> urlBuilder)
         {
             try
@@ -532,19 +538,19 @@ namespace ZeepTwitchChat.LogicTests
                     json = reader.ReadToEnd();
                 }
 
-                Dictionary<string, string> emotes = parser(json);
+                EmoteList emotes = parser(json);
                 string sample = null;
                 string sampleUrl = null;
-                foreach (KeyValuePair<string, string> emote in emotes)
+                foreach (KeyValuePair<string, string> emote in emotes.Urls)
                 {
                     sample = emote.Key;
                     sampleUrl = urlBuilder(emote.Value);
                     break;
                 }
 
-                bool ok = emotes.Count > 0 && sample != null;
+                bool ok = emotes.Urls.Count > 0 && sample != null;
                 Console.WriteLine("  " + (ok ? "PASS" : "FAIL") + "  " + label + ": " +
-                                  emotes.Count + " emote(s), e.g. " + sample + " -> " + sampleUrl);
+                                  emotes.Urls.Count + " emote(s), e.g. " + sample + " -> " + sampleUrl);
                 return ok ? 0 : 1;
             }
             catch (Exception exception)

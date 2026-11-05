@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <Compile Include="Program.cs" />
+    <Compile Include="EmoteGifChecks.cs" />
 
     <!-- Production sources under test (Unity free). -->
     <Compile Include="../../plugin/ZeepTwitchChat.Plugin/Twitch/IrcMessage.cs" />
@@ -30,6 +31,8 @@
     <Compile Include="../../plugin/ZeepTwitchChat.Plugin/Twitch/TwitchIrcClient.cs" />
     <Compile Include="../../plugin/ZeepTwitchChat.Plugin/Twitch/TwitchEmoteTagParser.cs" />
     <Compile Include="../../plugin/ZeepTwitchChat.Plugin/Util/MiniJson.cs" />
+    <Compile Include="../../plugin/ZeepTwitchChat.Plugin/Util/GifDecoder.cs" />
+    <Compile Include="../../plugin/ZeepTwitchChat.Plugin/Chat/Emotes/EmoteFrameNames.cs" />
     <Compile Include="../../plugin/ZeepTwitchChat.Plugin/Chat/ChatLineFormatter.cs" />
     <Compile Include="../../plugin/ZeepTwitchChat.Plugin/Chat/EmoteTagProvider.cs" />
     <Compile Include="../../plugin/ZeepTwitchChat.Plugin/Chat/MessageRateLimiter.cs" />

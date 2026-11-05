@@ -130,11 +130,35 @@ Mechanics that were checked in the shipped assemblies rather than guessed:
 | `TMP_SpriteAsset.GetSpriteIndexFromName` | used as the verification step before a name is ever emitted as a tag |
 | `Texture2D.LoadImage` | PNG/JPG only |
 
-That last row is why only PNG emotes are supported: BTTV is filtered on its `imageType`
-field, native Twitch emotes are PNG at every scale, FFZ serves PNG for static emotes, and
-7TV is unsupported entirely because it serves WebP/AVIF/GIF.
+That last row is why only PNG emotes were supported before 1.3.0: BTTV was filtered on its
+`imageType` field, native Twitch emotes are PNG at every scale, and FFZ serves PNG for static
+emotes.
 
-Two deliberately defensive choices:
+### GIF and animation (1.3.0)
+
+7TV serves its emotes as WebP/AVIF/GIF and BetterTTV serves animated ones as GIF, so the mod
+carries its own small GIF decoder (`Util/GifDecoder.cs`, LZW plus transparency and frame
+disposal, verified byte for byte against PIL on real 7TV files). It returns raw RGBA32, which
+goes into a `Texture2D` with `LoadRawTextureData`, so no Unity image API is involved.
+
+Animation has no per-emote object to drive: Zeepkist stores rendered rich text in its own
+twenty-line buffer. So every GIF frame becomes its own glyph — `Name`, `Name~1`, `Name~2`, ...
+— and `EmoteAnimator` rewrites the tags of the lines currently on screen. Frame timing comes
+from the GIF's own delays (`EmoteFrameNames.AdvanceByTime`), so an emote plays at the speed its
+author chose; `Emotes/AnimationFps` (15 by default) is only how often that is sampled.
+Consequences worth knowing:
+
+* Frame 0 keeps the plain glyph name, so a still emote and a one-frame GIF take exactly the
+  old path.
+* `~` is not a legal character in an emote name (`IsSafeEmoteName` allows `[A-Za-z0-9_-]`), so a
+  frame glyph can never collide with a real emote.
+* Frames are only decoded for emotes the provider flags as animated, animated emotes are never
+  pre-warmed, and at most `Emotes/MaxAnimatedEmotes` keep frames. Everything else keeps one
+  frame, which bounds both memory and the atlas size.
+* If a rewrite is ever missed, nothing is corrupted: the next message or the next pass simply
+  re-reads the text.
+
+Deliberately defensive choices:
 
 1. **Verify before advertising.** A name is added to the renderable snapshot only when
    `GetSpriteIndexFromName` finds it after `UpdateLookupTables()`. If TMP cannot resolve a

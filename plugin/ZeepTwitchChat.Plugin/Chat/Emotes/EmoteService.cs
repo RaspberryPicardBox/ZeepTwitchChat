@@ -6,6 +6,7 @@ using System.Net;
 using System.Threading;
 using UnityEngine;
 using ZeepTwitchChat.Twitch;
+using ZeepTwitchChat.Util;
 
 namespace ZeepTwitchChat.Chat.Emotes
 {
@@ -15,6 +16,7 @@ namespace ZeepTwitchChat.Chat.Emotes
         public bool Enabled = true;
         public bool EnableBttv = true;
         public bool EnableFfz = true;
+        public bool EnableSevenTv = true;
         public int MaxCachedEmotes = 200;
 
         /// <summary>Download provider-listed emotes in the background so first use is instant.</summary>
@@ -23,6 +25,34 @@ namespace ZeepTwitchChat.Chat.Emotes
 
         /// <summary>Rendered emote size in pixels; the chat font is roughly 24px at 1080p.</summary>
         public int RenderPixels = 24;
+
+        /// <summary>Play GIF emotes frame by frame instead of showing their first frame.</summary>
+        public bool AnimateEmotes = true;
+
+        /// <summary>How often animations are advanced. Frame timing follows each GIF; this only
+        /// sets how smoothly that is sampled, and how often the chat text is rewritten.</summary>
+        public int AnimationFramesPerSecond = 15;
+
+        /// <summary>Frames decoded per animated emote (upper bound on atlas size and memory).</summary>
+        public int MaxAnimationFrames = 24;
+
+        /// <summary>How many emotes may hold animation frames at once.</summary>
+        public int MaxAnimatedEmotes = 40;
+    }
+
+    /// <summary>Decoded emote textures plus the delays their container declared.</summary>
+    internal sealed class DecodedEmote
+    {
+        public DecodedEmote(List<Texture2D> textures, int[] frameDelays)
+        {
+            Textures = textures;
+            FrameDelays = frameDelays;
+        }
+
+        public List<Texture2D> Textures { get; private set; }
+
+        /// <summary>One delay per frame in milliseconds, or null for a still image.</summary>
+        public int[] FrameDelays { get; private set; }
     }
 
     /// <summary>
@@ -45,12 +75,19 @@ namespace ZeepTwitchChat.Chat.Emotes
             new ConcurrentDictionary<string, string>(StringComparer.Ordinal);
 
         private readonly HashSet<string> fetchedUrls = new HashSet<string>(StringComparer.Ordinal);
+
+        /// <summary>Names their provider reports as animated; those arrive as GIF.</summary>
+        private readonly HashSet<string> animatedNames = new HashSet<string>(StringComparer.Ordinal);
         private readonly Queue<string> prewarmQueue = new Queue<string>();
 
+        private EmoteAnimator animator;
+        private int animatedEmotes;
         private string channel;
         private string roomId;
         private float lastRebuildTime = -10f;
         private bool loggedReady;
+        private bool loggedAnimation;
+
 
         public EmoteService(EmoteOptions options, Action<string> log)
         {
@@ -61,6 +98,11 @@ namespace ZeepTwitchChat.Chat.Emotes
             {
                 atlas = new EmoteSpriteAsset(this.options.RenderPixels, this.log);
                 store = new EmoteImageStore(this.options.MaxCachedEmotes);
+            }
+
+            if (atlas != null && this.options.AnimateEmotes && this.options.AnimationFramesPerSecond > 0)
+            {
+                animator = new EmoteAnimator(atlas, this.options.AnimationFramesPerSecond);
             }
         }
 
@@ -162,33 +204,24 @@ namespace ZeepTwitchChat.Chat.Emotes
                     break;
                 }
 
-                Texture2D texture = new Texture2D(2, 2, TextureFormat.RGBA32, false)
+                DecodedEmote decoded = Decode(name, bytes);
+                if (decoded != null)
                 {
-                    name = name
-                };
-
-                bool loaded;
-                try
-                {
-                    loaded = ImageConversion.LoadImage(texture, bytes);
+                    atlas.Add(name, decoded.Textures, decoded.FrameDelays);
                 }
-                catch (Exception)
-                {
-                    loaded = false;
-                }
+            }
 
-                if (!loaded)
-                {
-                    UnityEngine.Object.Destroy(texture);
-                    continue;
-                }
+            float now = Time.realtimeSinceStartup;
 
-                atlas.Add(name, texture);
+            // Animation only rewrites text that is already on screen, so it runs whether or
+            // not the atlas changed this frame.
+            if (animator != null)
+            {
+                animator.Update(now);
             }
 
             // Rebuild on a timer rather than only on frames that decoded an image: with a
             // single late download the atlas would otherwise stay stale until the next one.
-            float now = Time.realtimeSinceStartup;
             if (!atlas.IsDirty || now - lastRebuildTime < RebuildInterval)
             {
                 return;
@@ -202,6 +235,120 @@ namespace ZeepTwitchChat.Chat.Emotes
                 loggedReady = true;
                 log("Twitch Chat: emote rendering active (" + atlas.RenderableCount + " emote(s) ready).");
             }
+
+            if (!loggedAnimation && animator != null && animator.AnimatedCount > 0)
+            {
+                loggedAnimation = true;
+                log("Twitch Chat: emote animation active (" + animator.AnimatedCount +
+                    " animated emote(s) at " + options.AnimationFramesPerSecond + " fps).");
+            }
+        }
+
+        /// <summary>
+        /// Turns downloaded bytes into textures. GIF is decoded here (Unity's loader reads
+        /// PNG/JPG only), everything else goes through <c>ImageConversion.LoadImage</c>.
+        /// </summary>
+        private DecodedEmote Decode(string name, byte[] bytes)
+        {
+            if (bytes == null || bytes.Length == 0)
+            {
+                return null;
+            }
+
+            if (GifDecoder.LooksLikeGif(bytes))
+            {
+                return DecodeGif(name, bytes);
+            }
+
+            Texture2D texture = new Texture2D(2, 2, TextureFormat.RGBA32, false)
+            {
+                name = name
+            };
+
+            bool loaded;
+            try
+            {
+                loaded = ImageConversion.LoadImage(texture, bytes);
+            }
+            catch (Exception)
+            {
+                loaded = false;
+            }
+
+            if (!loaded)
+            {
+                UnityEngine.Object.Destroy(texture);
+                return null;
+            }
+
+            return new DecodedEmote(new List<Texture2D> { texture }, null);
+        }
+
+        /// <summary>
+        /// Decodes a GIF. Frames are only kept for emotes the provider calls animated, and
+        /// only while the animated budget lasts; anything else keeps its first frame.
+        /// </summary>
+        private DecodedEmote DecodeGif(string name, byte[] bytes)
+        {
+            bool knownAnimated;
+            lock (animatedNames)
+            {
+                knownAnimated = animatedNames.Contains(name);
+            }
+
+            bool animate = options.AnimateEmotes &&
+                animatedEmotes < options.MaxAnimatedEmotes &&
+                knownAnimated;
+
+            int maxFrames = animate ? Math.Max(1, options.MaxAnimationFrames) : 1;
+
+            if (!GifDecoder.TryDecode(bytes, maxFrames, out List<GifDecoder.GifFrame> frames) ||
+                frames.Count == 0)
+            {
+                return null;
+            }
+
+            List<Texture2D> textures = new List<Texture2D>(frames.Count);
+            int[] delays = new int[frames.Count];
+
+            for (int i = 0; i < frames.Count; i++)
+            {
+                delays[i] = frames[i].DelayMilliseconds;
+            }
+
+            for (int i = 0; i < frames.Count; i++)
+            {
+                GifDecoder.GifFrame frame = frames[i];
+                Texture2D texture = new Texture2D(frame.Width, frame.Height, TextureFormat.RGBA32, false)
+                {
+                    name = name
+                };
+
+                try
+                {
+                    texture.LoadRawTextureData(frame.Rgba);
+                    texture.Apply(false, false);
+                }
+                catch (Exception)
+                {
+                    UnityEngine.Object.Destroy(texture);
+                    break;
+                }
+
+                textures.Add(texture);
+            }
+
+            if (textures.Count == 0)
+            {
+                return null;
+            }
+
+            if (textures.Count > 1)
+            {
+                animatedEmotes++;
+            }
+
+            return new DecodedEmote(textures, delays);
         }
 
         /// <summary>
@@ -258,12 +405,31 @@ namespace ZeepTwitchChat.Chat.Emotes
                 Fetch("FFZ channel", "https://api.frankerfacez.com/v1/room/" + channelLogin,
                     EmoteProviderParsers.ParseFfz, EmoteUrls.Ffz);
             }
+
+            if (options.EnableSevenTv)
+            {
+                // 7TV quotes whole urls per emote (host + file), so the builder is the
+                // identity function.
+                Fetch("7TV global", "https://7tv.io/v3/emote-sets/global",
+                    EmoteProviderParsers.ParseSevenTv, KeepUrl);
+
+                if (!string.IsNullOrEmpty(numericRoomId))
+                {
+                    Fetch("7TV channel", "https://7tv.io/v3/users/twitch/" + numericRoomId,
+                        EmoteProviderParsers.ParseSevenTv, KeepUrl);
+                }
+            }
+        }
+
+        private static string KeepUrl(string url)
+        {
+            return url;
         }
 
         private void Fetch(
             string label,
             string url,
-            Func<string, Dictionary<string, string>> parser,
+            Func<string, EmoteList> parser,
             Func<string, string> urlBuilder)
         {
             lock (fetchedUrls)
@@ -286,10 +452,10 @@ namespace ZeepTwitchChat.Chat.Emotes
                         return;
                     }
 
-                    Dictionary<string, string> emotes = parser(json);
+                    EmoteList emotes = parser(json);
                     int added = 0;
 
-                    foreach (KeyValuePair<string, string> emote in emotes)
+                    foreach (KeyValuePair<string, string> emote in emotes.Urls)
                     {
                         if (knownUrls.TryAdd(emote.Key, urlBuilder(emote.Value)))
                         {
@@ -297,12 +463,28 @@ namespace ZeepTwitchChat.Chat.Emotes
                         }
                     }
 
+                    lock (animatedNames)
+                    {
+                        foreach (string name in emotes.Animated)
+                        {
+                            animatedNames.Add(name);
+                        }
+                    }
+
                     if (options.PrewarmEmotes)
                     {
                         lock (prewarmQueue)
                         {
-                            foreach (string name in emotes.Keys)
+                            foreach (string name in emotes.Urls.Keys)
                             {
+                                // Animated emotes are left out: a GIF is many frames to
+                                // decode, and pre-warming everything would cost far more
+                                // memory than the handful of emotes people actually use.
+                                if (emotes.Animated.Contains(name))
+                                {
+                                    continue;
+                                }
+
                                 if (prewarmQueue.Count < this.options.MaxCachedEmotes)
                                 {
                                     prewarmQueue.Enqueue(name);
@@ -311,7 +493,8 @@ namespace ZeepTwitchChat.Chat.Emotes
                         }
                     }
 
-                    log("Twitch Chat: " + label + " emotes loaded (" + added + " new).");
+                    log("Twitch Chat: " + label + " emotes loaded (" + added + " new, " +
+                        emotes.Animated.Count + " animated).");
                 }
                 catch (Exception exception)
                 {

@@ -26,12 +26,20 @@ namespace ZeepTwitchChat.Chat.Emotes
         /// <summary>Texture resolution per emote; independent of how large it renders.</summary>
         private const int CellPixels = 32;
 
-        private const int Columns = 8;
+        private const int MinColumns = 8;
+        private const int MaxColumns = 64;
 
         private static AccessTools.FieldRef<TMP_SpriteAsset, FaceInfo> faceInfoRef;
         private static AccessTools.FieldRef<TMP_SpriteAsset, string> versionRef;
 
-        private readonly Dictionary<string, Texture2D> textures = new Dictionary<string, Texture2D>(StringComparer.Ordinal);
+        /// <summary>Frames per emote, frame 0 first. One glyph per frame; a still emote has one.</summary>
+        private readonly Dictionary<string, List<Texture2D>> frames =
+            new Dictionary<string, List<Texture2D>>(StringComparer.Ordinal);
+
+        private readonly Dictionary<string, int> frameCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        /// <summary>Per-frame delay in milliseconds, as the GIF declared it; null for stills.</summary>
+        private readonly Dictionary<string, int[]> frameDelays = new Dictionary<string, int[]>(StringComparer.Ordinal);
         private readonly List<string> order = new List<string>();
         private readonly List<UnityEngine.Object> retired = new List<UnityEngine.Object>();
         private readonly int renderPixels;
@@ -41,6 +49,7 @@ namespace ZeepTwitchChat.Chat.Emotes
         private TMP_SpriteAsset registeredFallback;
         private Texture2D atlas;
         private volatile HashSet<string> renderable = new HashSet<string>(StringComparer.Ordinal);
+        private volatile HashSet<string> renderableGlyphs = new HashSet<string>(StringComparer.Ordinal);
         private bool dirty;
 
         public EmoteSpriteAsset(int renderPixels, Action<string> log)
@@ -76,22 +85,128 @@ namespace ZeepTwitchChat.Chat.Emotes
             }
         }
 
-        /// <summary>Adds a decoded emote texture. Call on the main thread.</summary>
+        /// <summary>Adds a decoded single-frame emote. Call on the main thread.</summary>
         public void Add(string name, Texture2D texture)
         {
-            if (string.IsNullOrEmpty(name) || texture == null || textures.ContainsKey(name))
-            {
-                if (texture != null && textures.ContainsKey(name ?? string.Empty))
-                {
-                    UnityEngine.Object.Destroy(texture);
-                }
+            Add(name, new List<Texture2D> { texture }, null);
+        }
 
+        /// <summary>Adds a decoded emote with the per-frame delays the GIF declared.</summary>
+        public void Add(string name, List<Texture2D> emoteFrames, int[] delaysMs)
+        {
+            AddInternal(name, emoteFrames, delaysMs);
+        }
+
+        /// <summary>
+        /// Adds a decoded emote, one texture per animation frame. Call on the main thread.
+        /// The first texture is what a still line shows; the rest are the animation.
+        /// </summary>
+        public void Add(string name, List<Texture2D> emoteFrames)
+        {
+            AddInternal(name, emoteFrames, null);
+        }
+
+        private void AddInternal(string name, List<Texture2D> emoteFrames, int[] delaysMs)
+        {
+            bool usable = !string.IsNullOrEmpty(name) && emoteFrames != null && emoteFrames.Count > 0;
+
+            if (usable)
+            {
+                for (int i = 0; i < emoteFrames.Count && usable; i++)
+                {
+                    usable = emoteFrames[i] != null;
+                }
+            }
+
+            if (!usable || frames.ContainsKey(name))
+            {
+                DestroyAll(emoteFrames);
                 return;
             }
 
-            textures[name] = texture;
+            frames[name] = emoteFrames;
+            frameCounts[name] = emoteFrames.Count;
+
+            if (delaysMs != null && delaysMs.Length == emoteFrames.Count)
+            {
+                frameDelays[name] = delaysMs;
+            }
             order.Add(name);
             dirty = true;
+        }
+
+        /// <summary>Number of animation frames for an emote (1 for a still emote).</summary>
+        public int FrameCount(string name)
+        {
+            if (name == null)
+            {
+                return 0;
+            }
+
+            int count;
+            return frameCounts.TryGetValue(name, out count) ? count : 0;
+        }
+
+        /// <summary>Sprite tag for one animation frame of an emote, or null if it is not renderable.</summary>
+        public string GetFrameTag(string name, int frame)
+        {
+            if (string.IsNullOrEmpty(name) || !renderable.Contains(name))
+            {
+                return null;
+            }
+
+            int count = FrameCount(name);
+            int index = count > 0 ? ((frame % count) + count) % count : 0;
+
+            if (!renderableGlyphs.Contains(EmoteFrameNames.Glyph(name, index)))
+            {
+                return null;
+            }
+
+            return EmoteFrameNames.Tag(name, index, count);
+        }
+
+        /// <summary>Frame delays for an emote, or null when it is a still.</summary>
+        public int[] FrameDelays(string name)
+        {
+            if (name == null)
+            {
+                return null;
+            }
+
+            int[] delays;
+            return frameDelays.TryGetValue(name, out delays) ? delays : null;
+        }
+
+        /// <summary>Emotes that have more than one frame and can therefore animate.</summary>
+        public List<string> AnimatedNames()
+        {
+            List<string> result = new List<string>();
+            for (int i = 0; i < order.Count; i++)
+            {
+                if (FrameCount(order[i]) > 1 && renderable.Contains(order[i]))
+                {
+                    result.Add(order[i]);
+                }
+            }
+
+            return result;
+        }
+
+        private static void DestroyAll(List<Texture2D> textures)
+        {
+            if (textures == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < textures.Count; i++)
+            {
+                if (textures[i] != null)
+                {
+                    UnityEngine.Object.Destroy(textures[i]);
+                }
+            }
         }
 
         /// <summary>
@@ -109,7 +224,7 @@ namespace ZeepTwitchChat.Chat.Emotes
                 return null;
             }
 
-            return "<sprite name=\"" + emoteName + "\">";
+            return EmoteFrameNames.Tag(emoteName, 0, FrameCount(emoteName));
         }
 
         /// <summary>Rebuilds the atlas when new emotes arrived. Main thread, once per frame.</summary>
@@ -131,6 +246,7 @@ namespace ZeepTwitchChat.Chat.Emotes
                 log("Twitch Chat: could not build the emote atlas (" + Describe(exception) +
                     "); emotes stay as text.");
                 renderable = new HashSet<string>(StringComparer.Ordinal);
+                renderableGlyphs = new HashSet<string>(StringComparer.Ordinal);
                 dirty = false;
             }
         }
@@ -153,8 +269,24 @@ namespace ZeepTwitchChat.Chat.Emotes
         {
             TMP_SpriteAsset defaultAsset = GetDefaultSpriteAsset();
 
-            int rows = (order.Count + Columns - 1) / Columns;
-            int width = Columns * CellPixels;
+            // One glyph per frame, so an animated emote costs as many cells as it has
+            // frames. Columns grow with the glyph count to keep the atlas roughly square.
+            List<string> glyphNames = new List<string>();
+            List<Texture2D> glyphTextures = new List<Texture2D>();
+
+            for (int e = 0; e < order.Count; e++)
+            {
+                List<Texture2D> emoteFrames = frames[order[e]];
+                for (int f = 0; f < emoteFrames.Count; f++)
+                {
+                    glyphNames.Add(EmoteFrameNames.Glyph(order[e], f));
+                    glyphTextures.Add(emoteFrames[f]);
+                }
+            }
+
+            int columns = ColumnsFor(glyphNames.Count);
+            int rows = (glyphNames.Count + columns - 1) / columns;
+            int width = columns * CellPixels;
             int height = rows * CellPixels;
 
             Texture2D newAtlas = new Texture2D(width, height, TextureFormat.RGBA32, false)
@@ -171,11 +303,11 @@ namespace ZeepTwitchChat.Chat.Emotes
                 pixels[i] = transparent;
             }
 
-            for (int i = 0; i < order.Count; i++)
+            for (int i = 0; i < glyphTextures.Count; i++)
             {
-                int cellX = (i % Columns) * CellPixels;
-                int cellY = (rows - 1 - (i / Columns)) * CellPixels;
-                BlitCell(pixels, width, textures[order[i]], cellX, cellY);
+                int cellX = (i % columns) * CellPixels;
+                int cellY = (rows - 1 - (i / columns)) * CellPixels;
+                BlitCell(pixels, width, glyphTextures[i], cellX, cellY);
             }
 
             newAtlas.SetPixels32(pixels);
@@ -207,11 +339,11 @@ namespace ZeepTwitchChat.Chat.Emotes
             created.spriteCharacterTable.Clear();
             created.spriteGlyphTable.Clear();
 
-            for (int i = 0; i < order.Count; i++)
+            for (int i = 0; i < glyphNames.Count; i++)
             {
                 GlyphRect rect = new GlyphRect(
-                    (i % Columns) * CellPixels,
-                    (rows - 1 - (i / Columns)) * CellPixels,
+                    (i % columns) * CellPixels,
+                    (rows - 1 - (i / columns)) * CellPixels,
                     CellPixels,
                     CellPixels);
 
@@ -221,7 +353,7 @@ namespace ZeepTwitchChat.Chat.Emotes
                 TMP_SpriteGlyph glyph = new TMP_SpriteGlyph((uint)(i + 1), metrics, rect, 1f, 0);
                 TMP_SpriteCharacter character = new TMP_SpriteCharacter((uint)(0xE000 + i), glyph)
                 {
-                    name = order[i]
+                    name = glyphNames[i]
                 };
 
                 created.spriteGlyphTable.Add(glyph);
@@ -237,9 +369,19 @@ namespace ZeepTwitchChat.Chat.Emotes
             // Only advertise names TMP can actually resolve, so a failed glyph never costs
             // the chatter their emote name in the chat line.
             HashSet<string> verified = new HashSet<string>(StringComparer.Ordinal);
+            HashSet<string> verifiedGlyphs = new HashSet<string>(StringComparer.Ordinal);
+
+            for (int i = 0; i < glyphNames.Count; i++)
+            {
+                if (created.GetSpriteIndexFromName(glyphNames[i]) >= 0)
+                {
+                    verifiedGlyphs.Add(glyphNames[i]);
+                }
+            }
+
             for (int i = 0; i < order.Count; i++)
             {
-                if (created.GetSpriteIndexFromName(order[i]) >= 0)
+                if (verifiedGlyphs.Contains(order[i]))
                 {
                     verified.Add(order[i]);
                 }
@@ -267,11 +409,24 @@ namespace ZeepTwitchChat.Chat.Emotes
             asset = created;
             atlas = newAtlas;
             renderable = verified;
+            renderableGlyphs = verifiedGlyphs;
 
             log("Twitch Chat: emote atlas rebuilt (" + verified.Count + " of " + order.Count +
                 " emote(s) resolvable; " + attached + " chat field(s) attached; source=" +
                 (defaultAsset == null ? "none" : defaultAsset.name) +
                 "; shader=" + (material.shader == null ? "none" : material.shader.name) + ").");
+        }
+
+        /// <summary>Square-ish layout: enough columns that the sheet is not taller than wide.</summary>
+        private static int ColumnsFor(int glyphCount)
+        {
+            int columns = MinColumns;
+            while ((long)columns * columns < glyphCount && columns < MaxColumns)
+            {
+                columns *= 2;
+            }
+
+            return columns;
         }
 
         /// <summary>Copies one emote texture into an atlas cell, scaling to the cell size.</summary>
@@ -467,6 +622,7 @@ namespace ZeepTwitchChat.Chat.Emotes
         public void Dispose()
         {
             renderable = new HashSet<string>(StringComparer.Ordinal);
+            renderableGlyphs = new HashSet<string>(StringComparer.Ordinal);
             UnregisterFallback();
 
             for (int i = 0; i < retired.Count; i++)
@@ -479,15 +635,14 @@ namespace ZeepTwitchChat.Chat.Emotes
 
             retired.Clear();
 
-            foreach (KeyValuePair<string, Texture2D> texture in textures)
+            foreach (KeyValuePair<string, List<Texture2D>> emote in frames)
             {
-                if (texture.Value != null)
-                {
-                    UnityEngine.Object.Destroy(texture.Value);
-                }
+                DestroyAll(emote.Value);
             }
 
-            textures.Clear();
+            frames.Clear();
+            frameCounts.Clear();
+            frameDelays.Clear();
             order.Clear();
 
             if (asset != null)

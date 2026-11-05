@@ -22,7 +22,7 @@ namespace ZeepTwitchChat
     {
         public const string Guid = "com.nyxeonfox.zeepkist.twitchchat";
         public const string PluginName = "Twitch Chat";
-        public const string PluginVersion = "1.2.0";
+        public const string PluginVersion = "1.3.0";
 
         private static ManualLogSource staticLogger;
 
@@ -45,6 +45,11 @@ namespace ZeepTwitchChat
         private ConfigEntry<bool> renderEmotes;
         private ConfigEntry<bool> emoteBttv;
         private ConfigEntry<bool> emoteFfz;
+        private ConfigEntry<bool> emoteSevenTv;
+        private ConfigEntry<bool> emoteAnimate;
+        private ConfigEntry<int> emoteAnimationFps;
+        private ConfigEntry<int> emoteMaxFrames;
+        private ConfigEntry<int> emoteMaxAnimated;
         private ConfigEntry<int> emoteMaxCached;
         private ConfigEntry<float> emoteWaitSeconds;
         private ConfigEntry<bool> emotePrewarm;
@@ -224,6 +229,27 @@ namespace ZeepTwitchChat
             emoteFfz = Config.Bind("Emotes", "EnableFfz", true,
                 "Resolve FrankerFaceZ emotes (global and channel) by name.");
 
+            emoteSevenTv = Config.Bind("Emotes", "EnableSevenTv", true,
+                "Resolve 7TV emotes (global and channel) by name. 7TV emotes are downloaded " +
+                "as GIF, which this mod decodes itself.");
+
+            emoteAnimate = Config.Bind("Emotes", "AnimateEmotes", true,
+                "Play animated emotes frame by frame. Zeepkist stores rendered chat text, so " +
+                "animation means rewriting the visible lines a few times a second; turn this " +
+                "off if a busy chat feels heavy and the first frame is enough.");
+
+            emoteAnimationFps = Config.Bind("Emotes", "AnimationFps", 15,
+                "How many times a second animated emotes are advanced. Each GIF plays at its own " +
+                "speed; this only sets how smoothly that is sampled (and how often the chat text " +
+                "is rewritten). 0 stops the animation pass entirely.");
+
+            emoteMaxFrames = Config.Bind("Emotes", "MaxAnimationFrames", 24,
+                "Frames decoded per animated emote. Higher is smoother and uses more memory.");
+
+            emoteMaxAnimated = Config.Bind("Emotes", "MaxAnimatedEmotes", 40,
+                "How many emotes may keep animation frames at once. Past this, more emotes " +
+                "still render, as a still first frame.");
+
             emoteMaxCached = Config.Bind("Emotes", "MaxCachedEmotes", 200,
                 "Upper bound on emotes downloaded and kept in the atlas for this session.");
 
@@ -274,6 +300,11 @@ namespace ZeepTwitchChat
                     Enabled = renderEmotes.Value,
                     EnableBttv = emoteBttv.Value,
                     EnableFfz = emoteFfz.Value,
+                    EnableSevenTv = emoteSevenTv.Value,
+                    AnimateEmotes = emoteAnimate.Value,
+                    AnimationFramesPerSecond = emoteAnimationFps.Value,
+                    MaxAnimationFrames = emoteMaxFrames.Value,
+                    MaxAnimatedEmotes = emoteMaxAnimated.Value,
                     MaxCachedEmotes = emoteMaxCached.Value,
                     PrewarmEmotes = emotePrewarm.Value,
                     RenderPixels = emoteSize.Value

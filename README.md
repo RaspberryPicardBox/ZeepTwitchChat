@@ -30,8 +30,9 @@ lobby: the lines are written straight into your local chat UI.
 - Reads your channel with Twitch's IRC interface over TLS — read-only, no OAuth token required.
 - Writes each message into the game's own chat window with TextMeshPro rich text, exactly the
   way the game renders its own chat lines.
-- Draws **emotes as images** — native Twitch emotes, plus BetterTTV and FrankerFaceZ (global
+- Draws **emotes as images** — native Twitch emotes, plus BetterTTV, FrankerFaceZ and 7TV (global
   and channel) — downloading each one the first time it is used and caching it for the session.
+  Animated emotes play as animations.
 - Rate-limits and truncates so a fast channel cannot flood the chat.
 - Reconnects on its own if the connection drops.
 
@@ -40,9 +41,11 @@ lobby: the lines are written straight into your local chat UI.
 - Send anything to the lobby, to Photon, or to Twitch. You cannot chat back through the game.
 - Show messages when you are not in an online lobby: that is the only place Zeepkist has a
   chat window.
-- Render animated emotes, or emotes that only exist as WebP/AVIF/GIF (that includes all of
-  7TV). Unity's image decoder is PNG/JPG only, so those keep their text name instead of
-  leaving a hole in the line.
+- Decode WebP or AVIF: Unity's image loader reads PNG/JPG, and this mod adds GIF on top of
+  that. 7TV and BetterTTV both offer a GIF for every emote, so in practice nothing is lost;
+  an emote that only existed as WebP would keep its text name.
+- Animate FrankerFaceZ emotes: FFZ has no GIF endpoint, so those are drawn as their first
+  frame. 7TV and BetterTTV animations play.
 - Show avatars; `/me` lines are shown with a leading `* `.
 
 ---
@@ -108,6 +111,11 @@ Changes are applied immediately: the mod reconnects with the new settings.
 | Emotes | `EmoteSize` | `24` | Rendered emote size in pixels (chat text is ~24px at 1080p) |
 | Emotes | `EmoteWaitSeconds` | `3` | How long a line may wait for its emote images before posting with the text name; `0` never waits |
 | Emotes | `PrewarmEmotes` | `true` | Pre-download BetterTTV/FFZ emote images so first use is instant |
+| Emotes | `EnableSevenTv` | `true` | Resolve 7TV emotes (global and channel), downloaded as GIF |
+| Emotes | `AnimateEmotes` | `true` | Play animated emotes instead of showing the first frame |
+| Emotes | `AnimationFps` | `15` | How often animations are advanced; each GIF plays at its own speed, `0` turns animation off |
+| Emotes | `MaxAnimationFrames` | `24` | Frames decoded per animated emote (smoother vs. more memory) |
+| Emotes | `MaxAnimatedEmotes` | `40` | How many emotes may keep animation frames at once |
 | Advanced | `IrcHost` | `irc.chat.twitch.tv` | Twitch IRC host |
 | Advanced | `IrcPort` | `6697` | `6697` = TLS, `6667` = plain text |
 | Advanced | `UseTls` | `true` | Encrypt the connection |
@@ -131,9 +139,10 @@ Changes are applied immediately: the mod reconnects with the new settings.
   single runtime sprite atlas. Because Zeepkist stores the *rendered* text of a chat line, a
   line that is written before its emote image arrives keeps the emote's name forever — so
   emote lines are held for up to `EmoteWaitSeconds` (3 by default) while the image downloads,
-  then posted with whatever is available. With `PrewarmEmotes` on, BetterTTV/FFZ emotes are
-  already cached and never wait. If emotes look too small or too large for your resolution,
-  change `Emotes/EmoteSize`.
+  then posted with whatever is available. With `PrewarmEmotes` on, still BetterTTV/FFZ/7TV
+  emotes are already cached and never wait; animated ones are fetched when first used so the
+  background pass does not decode whole animations nobody asked for. If emotes look too small
+  or too large for your resolution, change `Emotes/EmoteSize`.
 
 ## Troubleshooting
 

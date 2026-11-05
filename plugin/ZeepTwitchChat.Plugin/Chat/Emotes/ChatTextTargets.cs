@@ -58,6 +58,27 @@ namespace ZeepTwitchChat.Chat.Emotes
             return changed;
         }
 
+        /// <summary>
+        /// The chat's big (lobby) or small (in-race) text field, for the animation pass.
+        /// Returns null instead of throwing when the game has no chat window yet.
+        /// </summary>
+        public static TextMeshProUGUI GetLogField(OnlineChatUI chatUi, bool small)
+        {
+            if (chatUi == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                return small ? GetSmallField(chatUi) : GetBigField(chatUi);
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
         private static int ApplyTo(TMP_Text text, TMP_SpriteAsset asset)
         {
             if (text == null)

@@ -25,6 +25,34 @@ namespace ZeepTwitchChat.Chat.Emotes
         {
             return "https://cdn.frankerfacez.com/emoticon/" + id + "/4";
         }
+
+        /// <summary>
+        /// 7TV hands out its files as names relative to a per-emote host, e.g.
+        /// <c>//cdn.7tv.app/emote/&lt;id&gt;</c> plus <c>2x.gif</c>.
+        /// </summary>
+        public static string SevenTv(string hostUrl, string fileName)
+        {
+            string baseUrl = hostUrl.StartsWith("//", StringComparison.Ordinal) ? "https:" + hostUrl : hostUrl;
+            return baseUrl.TrimEnd('/') + "/" + fileName;
+        }
+    }
+
+    /// <summary>
+    /// One provider's emote list: name to CDN url, plus the names that provider marks as
+    /// animated. Animated names are not pre-warmed (an animation is many frames to decode)
+    /// and they download as GIF, which <see cref="GifDecoder"/> handles.
+    /// </summary>
+    public sealed class EmoteList
+    {
+        public EmoteList()
+        {
+            Urls = new Dictionary<string, string>(StringComparer.Ordinal);
+            Animated = new HashSet<string>(StringComparer.Ordinal);
+        }
+
+        public Dictionary<string, string> Urls { get; private set; }
+
+        public HashSet<string> Animated { get; private set; }
     }
 
     /// <summary>
@@ -40,9 +68,9 @@ namespace ZeepTwitchChat.Chat.Emotes
         /// BetterTTV: the global endpoint is a bare array of <c>{id, code}</c>; the channel
         /// endpoints wrap the same objects in <c>emotes</c> and <c>sharedEmotes</c>.
         /// </summary>
-        public static Dictionary<string, string> ParseBttv(string json)
+        public static EmoteList ParseBttv(string json)
         {
-            Dictionary<string, string> result = new Dictionary<string, string>(StringComparer.Ordinal);
+            EmoteList result = new EmoteList();
             if (!MiniJson.TryParse(json, out object root))
             {
                 return result;
@@ -64,9 +92,9 @@ namespace ZeepTwitchChat.Chat.Emotes
         }
 
         /// <summary>FrankerFaceZ: <c>sets</c> is an object of set id to <c>{emoticons:[{id: number, name}]}</c>.</summary>
-        public static Dictionary<string, string> ParseFfz(string json)
+        public static EmoteList ParseFfz(string json)
         {
-            Dictionary<string, string> result = new Dictionary<string, string>(StringComparer.Ordinal);
+            EmoteList result = new EmoteList();
             if (!MiniJson.TryParse(json, out object root) || !(root is Dictionary<string, object> obj))
             {
                 return result;
@@ -96,7 +124,15 @@ namespace ZeepTwitchChat.Chat.Emotes
                     string id = GetId(emoticon);
                     if (IsUsable(name, id))
                     {
-                        result[name] = id;
+                        result.Urls[name] = id;
+
+                        // FrankerFaceZ serves a still first frame at the plain url, and that
+                        // is what a decoded emote becomes here. The flag is still recorded so
+                        // the animation pass knows the emote is not a still.
+                        if (GetBool(emoticon, "animated"))
+                        {
+                            result.Animated.Add(name);
+                        }
                     }
                 }
             }
@@ -104,7 +140,101 @@ namespace ZeepTwitchChat.Chat.Emotes
             return result;
         }
 
-        private static void AddBttvEntries(Dictionary<string, string> result, List<object> entries)
+        /// <summary>
+        /// 7TV: <c>emote-sets/{id}</c> returns <c>emotes</c> at the root, while the user
+        /// endpoint nests the same objects under <c>emote_set</c>. Each emote lists its files
+        /// as WebP, AVIF and GIF; GIF is the one format here that can be decoded without a
+        /// third-party library, so that is the one that is picked.
+        /// </summary>
+        public static EmoteList ParseSevenTv(string json)
+        {
+            EmoteList result = new EmoteList();
+            if (!MiniJson.TryParse(json, out object root) || !(root is Dictionary<string, object> obj))
+            {
+                return result;
+            }
+
+            AddSevenTvEntries(result, GetList(obj, "emotes"));
+
+            if (obj.TryGetValue("emote_set", out object set) && set is Dictionary<string, object> setObject)
+            {
+                AddSevenTvEntries(result, GetList(setObject, "emotes"));
+            }
+
+            return result;
+        }
+
+        private static void AddSevenTvEntries(EmoteList result, List<object> entries)
+        {
+            for (int i = 0; i < entries.Count; i++)
+            {
+                if (!(entries[i] is Dictionary<string, object> emote))
+                {
+                    continue;
+                }
+
+                string name = GetString(emote, "name");
+                if (!IsUsableName(name))
+                {
+                    continue;
+                }
+
+                Dictionary<string, object> data = GetDictionary(emote, "data");
+                Dictionary<string, object> host = GetDictionary(data, "host");
+                if (host == null)
+                {
+                    continue;
+                }
+
+                string file = PickGif(GetList(host, "files"));
+                string hostUrl = GetString(host, "url");
+                if (file == null || string.IsNullOrEmpty(hostUrl) || hostUrl.Length > 200)
+                {
+                    continue;
+                }
+
+                result.Urls[name] = EmoteUrls.SevenTv(hostUrl, file);
+
+                if (GetBool(data, "animated"))
+                {
+                    result.Animated.Add(name);
+                }
+            }
+        }
+
+        /// <summary>GIF file closest to 64px: enough detail at chat size, smallest download.</summary>
+        private static string PickGif(List<object> files)
+        {
+            string best = null;
+            int bestDelta = int.MaxValue;
+
+            for (int i = 0; i < files.Count; i++)
+            {
+                if (!(files[i] is Dictionary<string, object> file))
+                {
+                    continue;
+                }
+
+                string name = GetString(file, "name");
+                string format = GetString(file, "format");
+                if (string.IsNullOrEmpty(name) ||
+                    !string.Equals(format, "GIF", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                int delta = Math.Abs((int)GetNumber(file, "width", 64) - 64);
+                if (best == null || delta < bestDelta)
+                {
+                    best = name;
+                    bestDelta = delta;
+                }
+            }
+
+            return best;
+        }
+
+        private static void AddBttvEntries(EmoteList result, List<object> entries)
         {
             for (int i = 0; i < entries.Count; i++)
             {
@@ -116,29 +246,77 @@ namespace ZeepTwitchChat.Chat.Emotes
                 string id = GetString(emote, "id");
                 string code = GetString(emote, "code");
 
-                // BTTV reports the real container: only PNG can be decoded by Unity's
-                // Texture2D.LoadImage, so animated or WebP emotes are skipped (they keep
-                // their text name in chat instead of appearing as a hole).
+                // BTTV reports the real container. PNG goes straight to Unity's loader, GIF
+                // (which is how BTTV serves its animated emotes) goes through GifDecoder, and
+                // WebP is skipped: nothing here decodes it, so that emote keeps its text name
+                // rather than leaving a hole in the line.
                 string imageType = GetString(emote, "imageType");
-                if (!string.IsNullOrEmpty(imageType) &&
-                    !string.Equals(imageType, "png", StringComparison.OrdinalIgnoreCase))
+                bool isGif = string.Equals(imageType, "gif", StringComparison.OrdinalIgnoreCase);
+                bool isPng = string.IsNullOrEmpty(imageType) ||
+                    string.Equals(imageType, "png", StringComparison.OrdinalIgnoreCase);
+
+                if (!isPng && !isGif)
                 {
                     continue;
                 }
 
                 if (IsUsable(code, id))
                 {
-                    result[code] = id;
+                    result.Urls[code] = id;
+
+                    if (isGif)
+                    {
+                        result.Animated.Add(code);
+                    }
                 }
             }
         }
 
         private static bool IsUsable(string name, string id)
         {
+            return IsUsableName(name) && !string.IsNullOrEmpty(id) && id.Length <= 64;
+        }
+
+        private static bool IsUsableName(string name)
+        {
             return !string.IsNullOrEmpty(name) &&
-                   !string.IsNullOrEmpty(id) &&
-                   Twitch.TwitchEmoteTagParser.IsSafeEmoteName(name) &&
-                   id.Length <= 64;
+                   name.Length <= 64 &&
+                   Twitch.TwitchEmoteTagParser.IsSafeEmoteName(name);
+        }
+
+        private static Dictionary<string, object> GetDictionary(Dictionary<string, object> obj, string key)
+        {
+            if (obj != null && obj.TryGetValue(key, out object value) && value is Dictionary<string, object> map)
+            {
+                return map;
+            }
+
+            return null;
+        }
+
+        private static bool GetBool(Dictionary<string, object> obj, string key)
+        {
+            return obj != null && obj.TryGetValue(key, out object value) && value is bool flag && flag;
+        }
+
+        private static double GetNumber(Dictionary<string, object> obj, string key, double fallback)
+        {
+            if (obj != null && obj.TryGetValue(key, out object value))
+            {
+                if (value is double number)
+                {
+                    return number;
+                }
+
+                if (value is string text &&
+                    double.TryParse(text, System.Globalization.NumberStyles.Any,
+                        System.Globalization.CultureInfo.InvariantCulture, out double parsed))
+                {
+                    return parsed;
+                }
+            }
+
+            return fallback;
         }
 
         private static List<object> GetList(Dictionary<string, object> obj, string key)

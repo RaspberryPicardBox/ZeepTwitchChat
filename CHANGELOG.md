@@ -4,6 +4,35 @@ All notable changes to ZeepTwitchChat are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-11-05
+
+### Added
+
+- **Animated emotes.** Animated 7TV and BetterTTV emotes now play frame by frame. Zeepkist
+  stores rendered chat text, so there is nothing to animate directly: every GIF frame becomes
+  its own sprite glyph and the visible lines have their tags rewritten. Each emote plays at
+  the speed its GIF declares; `Emotes/AnimationFps` (15 by default) only sets how smoothly
+  that is sampled.
+- **7TV support.** 7TV was previously unsupported because its CDN serves WebP/AVIF/GIF; it also
+  offers a GIF of every emote, so the mod now reads that instead (global and channel sets).
+- A dependency-free GIF decoder (`Util/GifDecoder.cs`): LZW, transparency, frame delays and
+  disposal, verified byte for byte against PIL on real 7TV files.
+- `Emotes/EnableSevenTv`, `AnimateEmotes`, `AnimationFps`, `MaxAnimationFrames` and
+  `MaxAnimatedEmotes`.
+
+### Changed
+
+- BetterTTV emotes reported as `imageType: gif` (its animated ones) are no longer skipped.
+  WebP remains the one container that is dropped, since nothing in the mod decodes it.
+- Emote log lines now report how many provider emotes are animated, and say when animation is
+  active.
+
+### Notes
+
+- FrankerFaceZ animated emotes are drawn as their first frame: FFZ has no GIF endpoint.
+- Animated emotes are never pre-warmed (an animation is many frames to decode), so their first
+  use relies on the `EmoteWaitSeconds` window like a native Twitch emote does.
+
 ## [1.2.0] - 2026-11-05
 
 ### Fixed
