@@ -1,0 +1,100 @@
+# Design notes and verified facts
+
+Everything below was checked against the installed game build on this machine, not
+assumed. Decompiled with `ilspycmd` from
+`Zeepkist_Data/Managed/Zeepkist.dll`.
+
+## 1. The chat window, as the game implements it
+
+`OnlineChatUI` (global namespace, `ZeepkistClient` assembly) holds the chat window.
+
+| Member | Access in the build | Notes |
+| --- | --- | --- |
+| `Awake()` | public override | Creates/initialises the window; closes itself when `ZeepkistNetwork.IsConnectedToGame` is false |
+| `UpdateChatFields(string, ulong)` | **private** | The only way to add a line |
+| `ClearChat()` | public | Resets the buffer |
+| `SendChatMessage(string)` | public | Sends to the network — **never used by this mod** |
+| `GetChatMessage(ZeepkistChatMessage)` | private | Network handler, registered in `OnOpen` |
+
+`UpdateChatFields` behaviour, verbatim in effect:
+
+1. inserts the line at index 0 of `receivedChatList` and the steam id at index 0 of
+   `receivedChatIDs`;
+2. trims both lists to 20 entries;
+3. rebuilds the small chat field from the first 5 entries and the big field from all 20;
+4. wraps lines with a non-zero steam id in `<link="<id>">...</link>` so they can be clicked
+   to open a Steam profile.
+
+**Consequence:** writing with steam id `0` gives exactly the "server message" rendering
+without a Steam link, which is what a Twitch chatter should get. This mod always passes 0.
+
+## 2. Why Harmony instead of ZeepSDK's `ChatApi`
+
+ZeepSDK 2.7.5 ships `ChatApi.AddLocalMessage(string)` which calls
+`onlineChatUI.UpdateChatFields(message, 0)`. The installed ZeepSDK DLL compiles that call
+against a build where the method was public, while the installed game declares it
+`private`. Cross-assembly access to a private method is not guaranteed to survive JIT
+verification (`MethodAccessException` on Mono), so relying on it would be fragile.
+
+This mod instead binds the method itself. It tries `HarmonyLib.MethodInvoker.GetHandler`
+(the emitted delegate, present in the BepInEx-bundled `0Harmony.dll`) and falls back to a
+plain `MethodInfo.Invoke` if that delegate cannot be created, because reflection with
+full trust can call a private method from another assembly on Mono. Both paths are cached
+for the process lifetime, and a game update that renames the method produces one clear log
+line instead of a silent failure.
+
+The cost is one reflection lookup and, at worst, one reflective call per displayed line —
+trivial at the default thirty lines per minute.
+
+## 3. Line format (TextMeshPro rich text)
+
+`GetChatMessage` builds, for a player message:
+
+```csharp
+"<#RRGGBB>" + "<b>" + name + "</b></color>: " + message      // colours from Player.chatColor
+"sprite/" + name sprite tags for badges                       // "<sprite=\"x\" name=\"y\">"
+```
+
+So the window accepts TMP rich text, and `<color=#RRGGBB>` is a valid equivalent of the
+game's `<#RRGGBB>` shorthand. This mod emits:
+
+```
+<color=#9147FF><b>[TWITCH]</b></color> <color=#00AD03><b>[MOD]</b></color> <color=#1E90FF><b>Name</b></color>: text
+```
+
+## 4. Threat model: untrusted text in a rich-text field
+
+Anything a chatter types would otherwise be interpreted as TMP markup — `<size=200>`,
+`<sprite="achievement 2" name="host_client">` (the game's own host badge), `<link="...">`,
+`<cspace>`, and so on. TMP has no sanitiser, so the formatter strips `<` and `>` from every
+untrusted fragment (message, display name, label) before composing a line, maps
+`\r`/`\n`/`\t` to a single space, drops other control characters, collapses whitespace and
+truncates. Colours are only emitted after validating the value against `^#?[0-9A-Fa-f]{6}$`.
+
+Unit tests assert that injected `<size>`, `<sprite>` and `<link>` tags never reach the
+composed line.
+
+## 5. Twitch side
+
+- Anonymous read-only access: `NICK justinfan#####`, then `JOIN #channel`. No token, no
+  scopes; `CAP REQ :twitch.tv/tags twitch.tv/commands` provides `color`, `display-name`,
+  `badges`, `mod`.
+- `/me` arrives as CTCP: `\u0001ACTION text\u0001`. `TwitchIrcClient.NormaliseChatText`
+  turns it into `* text`.
+- Verified live: joining `#nyxeonfox` (TLS, port 6697) returns `001`, `CAP ACK`,
+  `JOIN`, `ROOMSTATE`, `353`/`366` and stays connected; test traffic on busy channels
+  confirmed colour tags, badges and CTCP handling.
+
+## 6. Threading
+
+`TwitchIrcClient` runs on a background thread and raises events there. Lines are pushed
+into a `ConcurrentQueue`; `Plugin.Update()` drains it on the Unity main thread, where the
+chat UI is touched. The queue is bounded (40 lines, oldest dropped) so a flood cannot grow
+memory, and the rate limiter decides what actually gets displayed.
+
+## 7. Deliberate limitations
+
+- Local display only: `UpdateChatFields` never sends anything to the network.
+- No lobby means no chat window, so messages are dropped rather than replayed later.
+- No emotes/avatars: Twitch emotes would require downloaded sprite atlases; the text form
+  (`Kappa`) is kept.

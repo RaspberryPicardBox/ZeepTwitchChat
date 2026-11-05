@@ -1,0 +1,32 @@
+# ---- .NET / C# build output ----
+bin/
+obj/
+*.user
+*.suo
+.vs/
+.idea/
+*.DotSettings.user
+
+# ---- Build artifacts ----
+# Never commit game, BepInEx or our own compiled binaries (see Directory.Build.props).
+*.dll
+*.pdb
+*.xml
+*.deps.json
+*.runtimeconfig.json
+release/
+
+# ---- Local / machine-specific ----
+local.props
+Directory.Build.props.user
+*.local
+
+# ---- Logs ----
+*.log
+LogOutput.log
+
+# ---- OS cruft ----
+.DS_Store
+Thumbs.db
+*.swp
+*~

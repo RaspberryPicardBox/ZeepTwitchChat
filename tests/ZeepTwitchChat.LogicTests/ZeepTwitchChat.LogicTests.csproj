@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Dependency-free test harness + live Twitch probe.
+
+    The plugin's logic files are compiled straight from the plugin project, so the tests
+    exercise the exact code that ships. Only the Unity/BepInEx-dependent files are left
+    out (Plugin.cs, ChatInjector.cs, Patches/), which is why the pure logic lives in
+    separate files in the first place.
+
+    Run all checks (see README for the exact command lines): dotnet run with the project
+    set to tests/ZeepTwitchChat.LogicTests. Pass the "live" argument followed by a channel
+    name to run the live IRC probe instead.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>ZeepTwitchChat.LogicTests</RootNamespace>
+    <AssemblyName>ZeepTwitchChat.LogicTests</AssemblyName>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+
+    <!-- Production sources under test (Unity free). -->
+    <Compile Include="../../plugin/ZeepTwitchChat.Plugin/Twitch/IrcMessage.cs" />
+    <Compile Include="../../plugin/ZeepTwitchChat.Plugin/Twitch/TwitchIrcParser.cs" />
+    <Compile Include="../../plugin/ZeepTwitchChat.Plugin/Twitch/TwitchChatUser.cs" />
+    <Compile Include="../../plugin/ZeepTwitchChat.Plugin/Twitch/TwitchIrcClient.cs" />
+    <Compile Include="../../plugin/ZeepTwitchChat.Plugin/Chat/ChatLineFormatter.cs" />
+    <Compile Include="../../plugin/ZeepTwitchChat.Plugin/Chat/MessageRateLimiter.cs" />
+  </ItemGroup>
+
+</Project>

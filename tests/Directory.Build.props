@@ -1,0 +1,18 @@
+<Project>
+
+  <!--
+    Test harness settings. This file stops MSBuild walking up to the repository-root
+    Directory.Build.props, so the tests build for the installed .NET runtime instead of
+    net472 and never need the Zeepkist/BepInEx reference assemblies.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <NoWarn>$(NoWarn);SYSLIB0057</NoWarn>
+  </PropertyGroup>
+
+</Project>

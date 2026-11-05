@@ -1,0 +1,72 @@
+<Project>
+
+  <!--
+    Directory.Build.props — shared build configuration for ZeepTwitchChat.
+
+    Everything the plugin needs at compile time is taken from the *local*
+    Zeepkist install and is referenced in place via HintPath. Game and BepInEx
+    binaries are NEVER copied into the repository or committed (see .gitignore).
+    Nothing is redistributed with the released mod except our own DLL.
+
+    Override the game location with:
+      dotnet build -p:GameDir=/path/to/Zeepkist
+    or an untracked local.props / Directory.Build.props.user next to this file.
+  -->
+
+  <PropertyGroup>
+    <GameDir Condition="'$(GameDir)' == ''">/mnt/RAID_SSD/SteamLibrary/steamapps/common/Zeepkist</GameDir>
+
+    <ManagedDir>$(GameDir)/Zeepkist_Data/Managed</ManagedDir>
+    <BepInExCoreDir>$(GameDir)/BepInEx/core</BepInExCoreDir>
+
+    <TargetFramework>net472</TargetFramework>
+
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      BepInEx core. Present in BepInEx/core/ at runtime, so Private=false keeps
+      them out of our build output and out of the release zip.
+    -->
+    <Reference Include="0Harmony">
+      <HintPath>$(BepInExCoreDir)/0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="BepInEx">
+      <HintPath>$(BepInExCoreDir)/BepInEx.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <!-- Game logic (global namespace types such as OnlineChatUI) + Unity core. -->
+    <Reference Include="Zeepkist">
+      <HintPath>$(ManagedDir)/Zeepkist.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(ManagedDir)/UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(ManagedDir)/UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Fail fast, with an actionable message, when the references are missing. -->
+  <Target Name="ValidateGameReferences" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="!Exists('$(GameDir)/Zeepkist.exe')"
+           Text="GameDir does not look like a Zeepkist install (no Zeepkist.exe): '$(GameDir)'. Pass -p:GameDir=/path/to/Zeepkist." />
+    <Error Condition="!Exists('$(ManagedDir)/Zeepkist.dll')"
+           Text="Zeepkist.dll not found at '$(ManagedDir)'. Is GameDir correct?" />
+    <Error Condition="!Exists('$(BepInExCoreDir)/BepInEx.dll')"
+           Text="BepInEx is not installed at '$(BepInExCoreDir)'. Install BepInEx 5.4.x x64 before building." />
+    <Error Condition="!Exists('$(BepInExCoreDir)/0Harmony.dll')"
+           Text="0Harmony.dll not found at '$(BepInExCoreDir)'. The BepInEx install looks incomplete." />
+  </Target>
+
+</Project>
