@@ -134,6 +134,28 @@ That last row is why only PNG emotes were supported before 1.3.0: BTTV was filte
 `imageType` field, native Twitch emotes are PNG at every scale, and FFZ serves PNG for static
 emotes.
 
+### Names, matching and escaping (1.3.2)
+
+Two sources feed the emote list of a line:
+
+* Twitch's IRC `emotes` tag, which covers native Twitch emotes only, parsed by
+  `TwitchEmoteTagParser`.
+* A word pass over the message, `EmoteWordScanner`, which matches whitespace-delimited tokens
+  against the known BTTV/7TV/FFZ names. Exact and case sensitive, and punctuation is part of the
+  word, which is how those providers behave (`RainTime,` is not an emote, `:tf:` is). A token
+  that overlaps a native span is skipped, so Twitch always wins and spans stay ordered.
+
+Names are matched as written but never emitted as written. When the atlas packs a glyph it asks
+`EmoteFrameNames.Alias` for the name to store: `[A-Za-z0-9_-]` names keep their name (so ordinary
+emotes still have readable tags), anything else becomes `e` + an eight digit FNV-1a hash, and
+`EmoteSpriteAsset` adds a numeric suffix if two emotes ever land on the same alias. Animation
+frames hang off that alias (`alias~1`, `alias~2`, ...).
+
+That separation is what makes the relaxed name rule safe: the only text we ever put inside
+`<sprite name="...">` is an alias we generated, so a provider emote cannot inject a quote, a
+closing bracket or markup, whatever it is called. Message text is still sanitised character by
+character for everything that is not an emote.
+
 ### GIF and animation (1.3.0)
 
 7TV serves its emotes as WebP/AVIF/GIF and BetterTTV serves animated ones as GIF, so the mod

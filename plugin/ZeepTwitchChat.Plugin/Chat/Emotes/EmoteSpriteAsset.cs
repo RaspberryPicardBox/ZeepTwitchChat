@@ -38,6 +38,9 @@ namespace ZeepTwitchChat.Chat.Emotes
 
         private readonly Dictionary<string, int> frameCounts = new Dictionary<string, int>(StringComparer.Ordinal);
 
+        /// <summary>Glyph base name per emote: the name itself when tag safe, a hash otherwise.</summary>
+        private readonly Dictionary<string, string> aliasByEmote = new Dictionary<string, string>(StringComparer.Ordinal);
+
         /// <summary>Per-frame delay in milliseconds, as the GIF declared it; null for stills.</summary>
         private readonly Dictionary<string, int[]> frameDelays = new Dictionary<string, int[]>(StringComparer.Ordinal);
         private readonly List<string> order = new List<string>();
@@ -135,6 +138,24 @@ namespace ZeepTwitchChat.Chat.Emotes
             dirty = true;
         }
 
+        /// <summary>
+        /// Glyph base name for an emote: the emote name when it is safe inside a sprite tag,
+        /// otherwise a stable alias. Fresh names (before the first rebuild) get the plain hash
+        /// form; the rebuild resolves collisions.
+        /// </summary>
+        public string AliasFor(string emoteName)
+        {
+            if (string.IsNullOrEmpty(emoteName))
+            {
+                return emoteName;
+            }
+
+            string alias;
+            return aliasByEmote.TryGetValue(emoteName, out alias)
+                ? alias
+                : EmoteFrameNames.Alias(emoteName);
+        }
+
         /// <summary>Number of animation frames for an emote (1 for a still emote).</summary>
         public int FrameCount(string name)
         {
@@ -157,13 +178,14 @@ namespace ZeepTwitchChat.Chat.Emotes
 
             int count = FrameCount(name);
             int index = count > 0 ? ((frame % count) + count) % count : 0;
+            string glyphBase = AliasFor(name);
 
-            if (!renderableGlyphs.Contains(EmoteFrameNames.Glyph(name, index)))
+            if (!renderableGlyphs.Contains(EmoteFrameNames.Glyph(glyphBase, index)))
             {
                 return null;
             }
 
-            return EmoteFrameNames.Tag(name, index, count);
+            return EmoteFrameNames.Tag(glyphBase, index, count);
         }
 
         /// <summary>Frame delays for an emote, or null when it is a still.</summary>
@@ -224,7 +246,7 @@ namespace ZeepTwitchChat.Chat.Emotes
                 return null;
             }
 
-            return EmoteFrameNames.Tag(emoteName, 0, FrameCount(emoteName));
+            return EmoteFrameNames.Tag(AliasFor(emoteName), 0, FrameCount(emoteName));
         }
 
         /// <summary>Rebuilds the atlas when new emotes arrived. Main thread, once per frame.</summary>
@@ -269,6 +291,8 @@ namespace ZeepTwitchChat.Chat.Emotes
         {
             TMP_SpriteAsset defaultAsset = GetDefaultSpriteAsset();
 
+            BuildAliases();
+
             // One glyph per frame, so an animated emote costs as many cells as it has
             // frames. Columns grow with the glyph count to keep the atlas roughly square.
             List<string> glyphNames = new List<string>();
@@ -279,7 +303,7 @@ namespace ZeepTwitchChat.Chat.Emotes
                 List<Texture2D> emoteFrames = frames[order[e]];
                 for (int f = 0; f < emoteFrames.Count; f++)
                 {
-                    glyphNames.Add(EmoteFrameNames.Glyph(order[e], f));
+                    glyphNames.Add(EmoteFrameNames.Glyph(aliasByEmote[order[e]], f));
                     glyphTextures.Add(emoteFrames[f]);
                 }
             }
@@ -381,7 +405,7 @@ namespace ZeepTwitchChat.Chat.Emotes
 
             for (int i = 0; i < order.Count; i++)
             {
-                if (verifiedGlyphs.Contains(order[i]))
+                if (verifiedGlyphs.Contains(aliasByEmote[order[i]]))
                 {
                     verified.Add(order[i]);
                 }
@@ -415,6 +439,40 @@ namespace ZeepTwitchChat.Chat.Emotes
                 " emote(s) resolvable; " + attached + " chat field(s) attached; source=" +
                 (defaultAsset == null ? "none" : defaultAsset.name) +
                 "; shader=" + (material.shader == null ? "none" : material.shader.name) + ").");
+        }
+
+        /// <summary>
+        /// Works out one glyph base name per emote. Collisions are resolved with a counter: a
+        /// hash collision is vanishingly unlikely, but a provider emote can literally be named
+        /// like an alias, and two emotes must never share a glyph.
+        /// </summary>
+        private void BuildAliases()
+        {
+            aliasByEmote.Clear();
+            Dictionary<string, string> taken = new Dictionary<string, string>(StringComparer.Ordinal);
+
+            for (int i = 0; i < order.Count; i++)
+            {
+                string name = order[i];
+                string alias = EmoteFrameNames.Alias(name);
+                string owner;
+
+                if (taken.TryGetValue(alias, out owner) && !string.Equals(owner, name, StringComparison.Ordinal))
+                {
+                    string baseAlias = alias;
+                    int suffix = 2;
+
+                    do
+                    {
+                        alias = baseAlias + "_" + suffix.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                        suffix++;
+                    }
+                    while (taken.ContainsKey(alias));
+                }
+
+                taken[alias] = name;
+                aliasByEmote[name] = alias;
+            }
         }
 
         /// <summary>Square-ish layout: enough columns that the sheet is not taller than wide.</summary>
@@ -642,6 +700,7 @@ namespace ZeepTwitchChat.Chat.Emotes
 
             frames.Clear();
             frameCounts.Clear();
+            aliasByEmote.Clear();
             frameDelays.Clear();
             order.Clear();
 

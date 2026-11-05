@@ -23,6 +23,8 @@
   <ItemGroup>
     <Compile Include="Program.cs" />
     <Compile Include="EmoteGifChecks.cs" />
+    <Compile Include="EmoteNameChecks.cs" />
+    <Compile Include="../../plugin/ZeepTwitchChat.Plugin/Chat/Emotes/EmoteWordScanner.cs" />
 
     <!-- Production sources under test (Unity free). -->
     <Compile Include="../../plugin/ZeepTwitchChat.Plugin/Twitch/IrcMessage.cs" />

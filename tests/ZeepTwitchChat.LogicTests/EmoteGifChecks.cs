@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using ZeepTwitchChat.Chat.Emotes;
+using ZeepTwitchChat.Twitch;
 using ZeepTwitchChat.Util;
 
 namespace ZeepTwitchChat.LogicTests
@@ -276,6 +277,61 @@ namespace ZeepTwitchChat.LogicTests
                                   frames[0].Height + ", " + frames.Count + " frame(s), " + bytes.Length +
                                   " bytes, first delay " + frames[0].DelayMilliseconds + "ms");
                 return 0;
+            }
+            catch (Exception exception)
+            {
+                Console.WriteLine("  FAIL  " + label + ": " + exception.GetType().Name + ": " + exception.Message);
+                return 1;
+            }
+        }
+
+        /// <summary>
+        /// Real provider names that need aliasing: BTTV ships emotes called <c>:tf:</c> and
+        /// <c>D:</c>, 7TV ships <c>:)</c>. This proves they survive parsing, get a tag-safe
+        /// alias, are matched as words, and that the url the parser builds really serves an
+        /// image.
+        /// </summary>
+        private static int CheckPunctuatedEmoteRoundTrip()
+        {
+            const string label = "punctuated emote names (BTTV)";
+
+            try
+            {
+                EmoteList list = EmoteProviderParsers.ParseBttv(
+                    Fetch("https://api.betterttv.net/3/cached/emotes/global"));
+
+                List<string> punctuated = new List<string>();
+                foreach (string name in list.Urls.Keys)
+                {
+                    if (!EmoteFrameNames.IsGlyphSafe(name))
+                    {
+                        punctuated.Add(name);
+                    }
+                }
+
+                if (punctuated.Count == 0)
+                {
+                    Console.WriteLine("  FAIL  " + label + ": BTTV returned no punctuated names to check");
+                    return 1;
+                }
+
+                string sample = punctuated[0];
+                string alias = EmoteFrameNames.Alias(sample);
+                string url = EmoteUrls.Bttv(list.Urls[sample]);
+                byte[] bytes = FetchBytes(url);
+
+                List<EmoteSpan> spans = EmoteWordScanner.Merge(
+                    "try " + sample + " now", null, word => list.Urls.ContainsKey(word));
+
+                bool ok = EmoteFrameNames.IsGlyphSafe(alias) && bytes.Length > 64 &&
+                    spans.Count == 1 && spans[0].Name == sample && spans[0].Start == 4;
+
+                Console.WriteLine("  " + (ok ? "PASS" : "FAIL") + "  " + label + ": " +
+                    punctuated.Count + " punctuated name(s), e.g. " + sample + " -> alias " +
+                    alias + ", " + bytes.Length + " bytes, matched at " +
+                    (spans.Count > 0 ? spans[0].Start.ToString() : "nowhere"));
+
+                return ok ? 0 : 1;
             }
             catch (Exception exception)
             {

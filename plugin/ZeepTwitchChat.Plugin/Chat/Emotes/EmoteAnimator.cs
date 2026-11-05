@@ -144,7 +144,7 @@ namespace ZeepTwitchChat.Chat.Emotes
                 }
 
                 int count = 0;
-                updated = EmoteFrameNames.Retarget(updated, name, frames, targets[i], out count);
+                updated = EmoteFrameNames.Retarget(updated, atlas.AliasFor(name), frames, targets[i], out count);
                 swaps += count;
             }
 

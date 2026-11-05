@@ -22,7 +22,7 @@ namespace ZeepTwitchChat
     {
         public const string Guid = "com.nyxeonfox.zeepkist.twitchchat";
         public const string PluginName = "Twitch Chat";
-        public const string PluginVersion = "1.3.1";
+        public const string PluginVersion = "1.3.2";
 
         private static ManualLogSource staticLogger;
 
@@ -432,6 +432,15 @@ namespace ZeepTwitchChat
             }
 
             EmoteService activeEmotes = emotes;
+
+            // Twitch's emotes tag only covers native Twitch emotes, so third-party emotes are
+            // found by looking up the message's words. Exact, case-sensitive word matching, as
+            // those providers do, and punctuation like a colon stays part of the name.
+            if (activeEmotes != null)
+            {
+                spans = EmoteWordScanner.Merge(text, spans, activeEmotes.KnowsName);
+            }
+
             if (activeEmotes != null)
             {
                 activeEmotes.OnMessage(spans);

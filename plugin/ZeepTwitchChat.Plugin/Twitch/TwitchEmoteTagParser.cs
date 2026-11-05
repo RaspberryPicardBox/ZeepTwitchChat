@@ -131,7 +131,15 @@ namespace ZeepTwitchChat.Twitch
             }
         }
 
-        /// <summary>True when the name can be embedded in a sprite tag without escaping.</summary>
+        /// <summary>
+        /// True when a name can be matched against chat safely.
+        ///
+        /// Provider emotes are allowed punctuation (a colon, brackets, whatever their site
+        /// permits), and they are matched as whole whitespace-delimited words, so the only hard
+        /// requirements are: no whitespace, no control characters and no angle brackets. The
+        /// glyph itself is stored under a tag-safe alias, so the raw name never reaches the
+        /// rich text we emit.
+        /// </summary>
         public static bool IsSafeEmoteName(string name)
         {
             if (string.IsNullOrEmpty(name) || name.Length > 64)
@@ -142,9 +150,7 @@ namespace ZeepTwitchChat.Twitch
             for (int i = 0; i < name.Length; i++)
             {
                 char c = name[i];
-                bool safe = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-                            (c >= '0' && c <= '9') || c == '_' || c == '-';
-                if (!safe)
+                if (c < ' ' || char.IsWhiteSpace(c) || c == '<' || c == '>')
                 {
                     return false;
                 }

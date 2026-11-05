@@ -113,6 +113,15 @@ namespace ZeepTwitchChat.Chat.Emotes
         /// <summary>Number of emotes that can currently be rendered as sprites.</summary>
         public int RenderableCount => atlas == null ? 0 : atlas.Count;
 
+        /// <summary>
+        /// True when this name belongs to a provider emote we know about (whether or not its
+        /// image has arrived yet). Called from the IRC thread for every word of a message.
+        /// </summary>
+        public bool KnowsName(string emoteName)
+        {
+            return !string.IsNullOrEmpty(emoteName) && knownUrls.ContainsKey(emoteName);
+        }
+
         /// <summary>True when this emote can currently be drawn as a sprite.</summary>
         public bool IsRenderable(string emoteName)
         {

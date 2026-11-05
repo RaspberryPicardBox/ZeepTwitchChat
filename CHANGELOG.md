@@ -4,6 +4,32 @@ All notable changes to ZeepTwitchChat are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] - 2026-11-05
+
+### Fixed
+
+- **Emotes whose names contain punctuation were never drawn.** The name whitelist was
+  `[A-Za-z0-9_-]`, so BetterTTV emotes like `:tf:`, `D:`, `c!` fell back to their text name, and
+  so did 7TV emotes like `:)`. The whitelist is now only "no whitespace, no control characters,
+  no angle brackets", because a name is never written into markup (see below).
+- **Third-party emotes were not looked up in messages at all.** Only Twitch's own `emotes` tag
+  produced emote spans, so a BTTV/7TV/FFZ emote had to also be a native Twitch emote to render.
+  Message words are now checked against the known provider names (`EmoteWordScanner`), exactly
+  and case sensitively, as those providers themselves do.
+
+### Security
+
+- Emote names are matched, never emitted. A glyph is stored under an alias: names that are
+  already tag safe keep their name, anything else becomes `e` plus a stable FNV-1a hash, and a
+  collision (or an emote literally named like an alias) gets a numeric suffix. The raw name
+  therefore cannot reach TextMeshPro markup whatever a provider calls its emote, which is what
+  makes relaxing the whitelist safe. Angle brackets are still stripped from message text.
+
+### Changed
+
+- BetterTTV parsing now keeps 12 more of its global emotes (the punctuated ones) — visible in the
+  provider probe.
+
 ## [1.3.1] - 2026-11-05
 
 ### Fixed

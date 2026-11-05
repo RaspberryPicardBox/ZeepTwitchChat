@@ -42,6 +42,7 @@ namespace ZeepTwitchChat.LogicTests
             GifChecks();
             EmoteFrameChecks();
             SevenTvChecks();
+            NameChecks();
             DeferredQueueChecks();
 
             Console.WriteLine();
@@ -511,6 +512,7 @@ namespace ZeepTwitchChat.LogicTests
             failures += CheckProvider("7TV global", "https://7tv.io/v3/emote-sets/global",
                 EmoteProviderParsers.ParseSevenTv, url => url);
             failures += CheckAnimatedEmoteRoundTrip();
+            failures += CheckPunctuatedEmoteRoundTrip();
 
             Console.WriteLine();
             Console.WriteLine("provider probe: " + failures + " failure(s).");
