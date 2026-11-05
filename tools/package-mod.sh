@@ -15,7 +15,7 @@
 set -euo pipefail
 
 CONFIGURATION="${CONFIGURATION:-Release}"
-GAME_DIR="${ZEEPKIST_GAME_DIR:-/mnt/RAID_SSD/SteamLibrary/steamapps/common/Zeepkist}"
+GAME_DIR="${ZEEPKIST_GAME_DIR:-}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT="$REPO_ROOT/plugin/ZeepTwitchChat.Plugin/ZeepTwitchChat.Plugin.csproj"
 
@@ -27,6 +27,12 @@ while [ "$#" -gt 0 ]; do
         *) echo "package-mod: unknown argument: $1" >&2; exit 2 ;;
     esac
 done
+
+if [ -z "$GAME_DIR" ]; then
+    echo "package-mod: GameDir is not set. Export ZEEPKIST_GAME_DIR=/path/to/Zeepkist (the folder with Zeepkist.exe) or pass --game-dir." >&2
+    exit 2
+fi
+
 
 VERSION="$(grep -oPm1 '(?<=<Version>)[^<]+' "$PROJECT")"
 DLL="$REPO_ROOT/plugin/ZeepTwitchChat.Plugin/bin/${CONFIGURATION}/net472/ZeepTwitchChat.dll"

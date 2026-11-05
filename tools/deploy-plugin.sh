@@ -15,7 +15,7 @@
 set -euo pipefail
 
 CONFIGURATION="${CONFIGURATION:-Release}"
-GAME_DIR="${ZEEPKIST_GAME_DIR:-/mnt/RAID_SSD/SteamLibrary/steamapps/common/Zeepkist}"
+GAME_DIR="${ZEEPKIST_GAME_DIR:-}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 while [ "$#" -gt 0 ]; do
@@ -26,6 +26,12 @@ while [ "$#" -gt 0 ]; do
         *) echo "deploy-plugin: unknown argument: $1" >&2; exit 2 ;;
     esac
 done
+
+if [ -z "$GAME_DIR" ]; then
+    echo "deploy-plugin: GameDir is not set. Export ZEEPKIST_GAME_DIR=/path/to/Zeepkist (the folder with Zeepkist.exe) or pass --game-dir." >&2
+    exit 2
+fi
+
 
 DLL="$REPO_ROOT/plugin/ZeepTwitchChat.Plugin/bin/${CONFIGURATION}/net472/ZeepTwitchChat.dll"
 DEST="$GAME_DIR/BepInEx/plugins/ZeepTwitchChat.dll"

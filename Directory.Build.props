@@ -8,13 +8,18 @@
     binaries are NEVER copied into the repository or committed (see .gitignore).
     Nothing is redistributed with the released mod except our own DLL.
 
-    Override the game location with:
+    The game location is never committed. Set it one of three ways:
       dotnet build -p:GameDir=/path/to/Zeepkist
-    or an untracked local.props / Directory.Build.props.user next to this file.
+      ZEEPKIST_GAME_DIR=/path/to/Zeepkist dotnet build
+      a local.props next to this file containing <GameDir>/path/to/Zeepkist</GameDir>
+    local.props is ignored by git; see local.props.example.
   -->
 
+  <!-- Machine specific settings (game path) live here and are never committed. -->
+  <Import Project="local.props" Condition="Exists('local.props')" />
+
   <PropertyGroup>
-    <GameDir Condition="'$(GameDir)' == ''">/mnt/RAID_SSD/SteamLibrary/steamapps/common/Zeepkist</GameDir>
+    <GameDir Condition="'$(GameDir)' == '' and '$(ZEEPKIST_GAME_DIR)' != ''">$(ZEEPKIST_GAME_DIR)</GameDir>
 
     <ManagedDir>$(GameDir)/Zeepkist_Data/Managed</ManagedDir>
     <BepInExCoreDir>$(GameDir)/BepInEx/core</BepInExCoreDir>

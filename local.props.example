@@ -1,0 +1,15 @@
+<Project>
+
+  <!--
+    Copy this file to local.props and set the path to your own Zeepkist install.
+    local.props is ignored by git, so your machine's paths stay out of the repository.
+
+    Everything else (target framework, package references, output layout) lives in
+    Directory.Build.props and should not be duplicated here.
+  -->
+
+  <PropertyGroup>
+    <GameDir>/path/to/Zeepkist</GameDir>
+  </PropertyGroup>
+
+</Project>

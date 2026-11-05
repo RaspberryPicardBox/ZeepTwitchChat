@@ -1,0 +1,56 @@
+name: Security
+
+# Runs on every branch push, every pull request, and weekly so a newly disclosed package
+# vulnerability is caught even when nothing changed.
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        run: |
+          version=$(curl -sSfL https://api.github.com/repos/gitleaks/gitleaks/releases/latest \
+            | grep -oP '"tag_name": "v\K[^"]+')
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${version}/gitleaks_${version}_linux_x64.tar.gz" \
+            | tar -xz gitleaks
+          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+
+      - name: Scan history for credentials
+        run: gitleaks detect --source . --redact --verbose --exit-code 1
+
+  dependencies:
+    name: Package audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # Only the test project restores without a game install; the plugin's references come
+      # from the local Zeepkist folder.
+      - name: Restore
+        run: dotnet restore tests/ZeepTwitchChat.LogicTests
+
+      - name: Known vulnerabilities
+        run: |
+          output=$(dotnet list tests/ZeepTwitchChat.LogicTests package --vulnerable --include-transitive)
+          echo "$output"
+          if echo "$output" | grep -qi 'has the following vulnerable'; then
+            echo "::error::A referenced package has a known vulnerability."
+            exit 1
+          fi

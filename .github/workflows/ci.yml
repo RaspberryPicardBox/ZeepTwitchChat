@@ -1,0 +1,40 @@
+name: CI
+
+# Runs on every branch push and on every pull request, so a merge cannot land with a
+# failing logic or security check.
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Logic and security checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # The harness compiles the plugin's Unity-free logic, so it needs neither Zeepkist nor
+      # BepInEx. It includes the security section (rich text injection, url policy, decoder
+      # limits) and the moderation checks (deletions, bans, buffer plan).
+      - name: Check suite
+        run: dotnet run --project tests/ZeepTwitchChat.LogicTests -c Release
+
+      # The audit in docs/security.md, as a gate: fails on dynamic loading, reflection on
+      # names, deserialisation, process spawn or P/Invoke.
+      - name: Gate - forbidden APIs
+        run: ./tools/check-dangerous-apis.sh
+
+      # Machine paths, personal addresses and credentials stay out of a public repository.
+      - name: Gate - no personal data
+        run: ./tools/check-personal-data.sh

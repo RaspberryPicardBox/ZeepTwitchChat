@@ -1,0 +1,39 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  analyze:
+    name: Analyze C#
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: csharp
+
+      # Build what CodeQL can see: the shared logic compiled by the test harness. The Unity
+      # facing files need a real Zeepkist install, so they are excluded here and covered by
+      # the review in docs/security.md instead.
+      - name: Build the logic under test
+        run: dotnet build tests/ZeepTwitchChat.LogicTests -c Release
+
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:csharp'

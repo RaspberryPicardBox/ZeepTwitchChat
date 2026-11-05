@@ -25,6 +25,10 @@
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
+  <Target Name="RequireGameDir" BeforeTargets="ResolveAssemblyReferences" Condition="'$(GameDir)' == ''">
+    <Error Text="GameDir is not set. Point the build at your Zeepkist install: dotnet build -p:GameDir=/path/to/Zeepkist, or set ZEEPKIST_GAME_DIR, or create local.props (see local.props.example)." />
+  </Target>
+
   <ItemGroup>
     <!-- Reference assemblies so net472 compiles on Linux with the .NET SDK. Build-only. -->
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />

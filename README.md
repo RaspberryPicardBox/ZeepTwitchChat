@@ -192,6 +192,28 @@ with the default anonymous connection the mod may never be told - put a moderato
 in `Twitch/OAuthToken` if you want deletions mirrored. AutoMod needs nothing from the mod: a held
 message never reaches chat, and an approved one shows up when it is approved.
 
+## Development checks
+
+Every push and pull request runs the full check suite plus two gates: a forbidden-API sweep (the
+automated half of the security review) and a personal-data sweep. CodeQL, a secret scan, a NuGet
+vulnerability audit and dependency review run alongside them, and Dependabot keeps the
+dependencies current. `docs/ci.md` lists what runs when, and which checks to require before a
+merge.
+
+Locally:
+
+```bash
+dotnet run --project tests/ZeepTwitchChat.LogicTests -c Release
+./tools/check-dangerous-apis.sh
+./tools/check-personal-data.sh
+```
+
+Building the plugin itself needs your own game install (nothing game-related is committed):
+
+```bash
+ZEEPKIST_GAME_DIR=/path/to/Zeepkist dotnet build plugin/ZeepTwitchChat.Plugin -c Release
+```
+
 ## Security
 
 Everything the mod renders comes from the network, so the trust boundaries are written down: no

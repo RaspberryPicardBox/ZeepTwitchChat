@@ -25,6 +25,22 @@ Directory.Build.props.user
 *.log
 LogOutput.log
 
+# ---- CI / tooling output ----
+TestResults/
+coverage*.xml
+coverage*.json
+*.trx
+codeql-db/
+*.sarif
+
+# ---- Secrets (never commit a signing key or a local env file) ----
+.env
+*.pfx
+*.snk
+
+# ---- Editors ----
+.vscode/
+
 # ---- OS cruft ----
 .DS_Store
 Thumbs.db
