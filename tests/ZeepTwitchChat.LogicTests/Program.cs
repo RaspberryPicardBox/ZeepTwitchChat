@@ -44,6 +44,7 @@ namespace ZeepTwitchChat.LogicTests
             SevenTvChecks();
             NameChecks();
             SecurityChecks();
+            ModerationChecks();
             DeferredQueueChecks();
 
             Console.WriteLine();
@@ -598,7 +599,7 @@ namespace ZeepTwitchChat.LogicTests
                     connected |= isConnected;
                     Console.WriteLine("  [state] " + detail);
                 };
-                client.MessageReceived += (user, text, spans) =>
+                client.MessageReceived += (user, text, spans, messageId) =>
                 {
                     received++;
                     Console.WriteLine();

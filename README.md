@@ -111,6 +111,8 @@ Changes are applied immediately: the mod reconnects with the new settings.
 | Emotes | `EmoteSize` | `24` | Rendered emote size in pixels (chat text is ~24px at 1080p) |
 | Emotes | `EmoteWaitSeconds` | `3` | How long a line may wait for its emote images before posting with the text name; `0` never waits |
 | Emotes | `PrewarmEmotes` | `true` | Pre-download BetterTTV/FFZ emote images so first use is instant |
+| Moderation | `MirrorDeletions` | `true` | Apply moderator deletions, bans and chat clears to the in-game lines |
+| Moderation | `RemoveShownLines` | `true` | Also remove lines already on screen (off: only cancel lines not yet posted) |
 | Emotes | `EnableSevenTv` | `true` | Resolve 7TV emotes (global and channel), downloaded as GIF |
 | Emotes | `AnimateEmotes` | `true` | Play animated emotes instead of showing the first frame |
 | Emotes | `AnimationFps` | `15` | How often animations are advanced; each GIF plays at its own speed, `0` turns animation off |
@@ -179,6 +181,16 @@ tools/package-mod.sh
 
 Game and BepInEx assemblies are referenced in place via `HintPath` and are never committed
 or redistributed; only `ZeepTwitchChat.dll` is shipped.
+
+### Deleted messages and bans
+
+Twitch reports these with `CLEARMSG` (one message) and `CLEARCHAT` (a ban, a timeout, or the whole
+chat). A line that is still waiting for its emote image is cancelled and never appears; a line
+already on screen is removed from the chat window, and every removal is written to the log. One
+caveat worth knowing: Twitch only sends those events to moderator and broadcaster connections, so
+with the default anonymous connection the mod may never be told - put a moderator account's token
+in `Twitch/OAuthToken` if you want deletions mirrored. AutoMod needs nothing from the mod: a held
+message never reaches chat, and an approved one shows up when it is approved.
 
 ## Security
 

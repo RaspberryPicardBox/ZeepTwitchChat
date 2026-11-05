@@ -77,8 +77,18 @@ namespace ZeepTwitchChat.Twitch
             this.options = options ?? throw new ArgumentNullException(nameof(options));
         }
 
-        /// <summary>Raised for every chat message: the chatter, the text, and any emote spans.</summary>
-        public event Action<TwitchChatUser, string, IReadOnlyList<EmoteSpan>> MessageReceived;
+        /// <summary>
+        /// Raised for every chat message: the chatter, the text, any emote spans, and Twitch's
+        /// id for the message (used to recognise a later deletion).
+        /// </summary>
+        public event Action<TwitchChatUser, string, IReadOnlyList<EmoteSpan>, string> MessageReceived;
+
+        /// <summary>
+        /// Raised for <c>CLEARMSG</c> and <c>CLEARCHAT</c>: a moderator deleted a message, timed
+        /// out or banned a user, or cleared the chat. Whether these arrive at all depends on the
+        /// connection's identity - Twitch sends them to moderators and the broadcaster.
+        /// </summary>
+        public event Action<ChatModerationEvent> Moderated;
 
         /// <summary>Raised when the connection comes up (true) or drops (false).</summary>
         public event Action<bool, string> ConnectionChanged;
@@ -265,6 +275,28 @@ namespace ZeepTwitchChat.Twitch
             }
         }
 
+        private void RaiseModerated(ChatModerationEvent moderation)
+        {
+            Action<ChatModerationEvent> handler = Moderated;
+            if (handler == null)
+            {
+                return;
+            }
+
+            try
+            {
+                handler(moderation);
+            }
+            catch (Exception exception)
+            {
+                RaiseLog("Twitch IRC: could not handle a moderation event (" +
+                    exception.GetType().Name + ": " + exception.Message + ").");
+            }
+        }
+
+
+        /// <summary>Timeout length in seconds; 0 when the tag is absent or nonsense.</summary>
+
         /// <summary>
         /// Reads one line, holding at most <paramref name="maxLength"/> characters. IRC lines
         /// from Twitch are well under a kilobyte; the cap exists so a misbehaving or hostile
@@ -379,6 +411,18 @@ namespace ZeepTwitchChat.Twitch
                     HandlePrivMsg(message);
                     return true;
 
+                case "CLEARMSG":
+                case "CLEARCHAT":
+                {
+                    ChatModerationEvent moderation = ChatModerationEvent.FromMessage(message);
+                    if (moderation != null)
+                    {
+                        RaiseModerated(moderation);
+                    }
+
+                    return true;
+                }
+
                 case "NOTICE":
                     RaiseLog("Twitch IRC notice: " + message.Trailing);
                     return true;
@@ -446,7 +490,7 @@ namespace ZeepTwitchChat.Twitch
                 emotes = new List<EmoteSpan>();
             }
 
-            Action<TwitchChatUser, string, IReadOnlyList<EmoteSpan>> handler = MessageReceived;
+            Action<TwitchChatUser, string, IReadOnlyList<EmoteSpan>, string> handler = MessageReceived;
             if (handler == null)
             {
                 return;
@@ -454,7 +498,7 @@ namespace ZeepTwitchChat.Twitch
 
             try
             {
-                handler(user, text, emotes);
+                handler(user, text, emotes, message.GetTag("id"));
             }
             catch (Exception exception)
             {

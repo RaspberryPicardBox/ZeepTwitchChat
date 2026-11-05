@@ -161,6 +161,30 @@ Text that is *not* an emote is still sanitised character by character, angle bra
 That is the fallback for an emote whose image is not available: `<3` shows as `3` rather than as
 text that TMP might interpret.
 
+### Deletions and bans (1.4.0)
+
+Twitch reports moderation with two IRC commands: `CLEARMSG` (one message, by `target-msg-id`) and
+`CLEARCHAT` (a ban or timeout, or a chat-wide clear when there is no target). The game has no
+concept of a removed line, so the mod handles both ends of the wait:
+
+* `ChatLineLedger` remembers every line it is about to post - message id, login, and later the
+  exact rendered string - because an emote may resolve while a line waits, changing what is
+  actually shown. A deletion that arrives for a queued line cancels it, and the injector refuses
+  to write it; a deletion for a posted line hands its rendered string to the main thread.
+* `ChatBufferEditor` applies those strings to `OnlineChatUI.receivedChatList` /
+  `receivedChatIDs` (both `List`, newest entry first, twenty entries) and then replays the
+  survivors through the game's own `UpdateChatFields(string, ulong)`, oldest first. Replaying
+  means the font size, the Steam link markup and the twenty line cap stay the game's logic; the
+  mod only decides which entries survive. If the replay throws, the original entries are restored
+  so the window can never be left empty, and only strings the mod recorded are ever named, so
+  lobby chat is untouched.
+
+Whether any of that ever runs depends on the connection: Twitch sends these commands to moderator
+and broadcaster connections, and the default connection here is anonymous (`justinfanNNNNN`). With
+a moderator token in `Twitch/OAuthToken` the feature is fully live. AutoMod is separate: a held
+message is never in chat at all, so nothing is mirrored until it is approved, at which point it
+arrives as a normal message.
+
 ### GIF and animation (1.3.0)
 
 7TV serves its emotes as WebP/AVIF/GIF and BetterTTV serves animated ones as GIF, so the mod

@@ -22,7 +22,7 @@ namespace ZeepTwitchChat
     {
         public const string Guid = "com.nyxeonfox.zeepkist.twitchchat";
         public const string PluginName = "Twitch Chat";
-        public const string PluginVersion = "1.3.4";
+        public const string PluginVersion = "1.4.0";
 
         private static ManualLogSource staticLogger;
 
@@ -52,12 +52,17 @@ namespace ZeepTwitchChat
         private ConfigEntry<int> emoteMaxAnimated;
         private ConfigEntry<int> emoteMaxCached;
         private ConfigEntry<float> emoteWaitSeconds;
+        private ConfigEntry<bool> mirrorDeletions;
+        private ConfigEntry<bool> removeShownLines;
         private ConfigEntry<bool> emotePrewarm;
         private ConfigEntry<int> emoteSize;
 
         private ChatInjector injector;
         private TwitchIrcClient client;
         private EmoteService emotes;
+
+        /// <summary>What we put on screen, so a moderator's deletion can be applied to it.</summary>
+        private readonly ChatLineLedger ledger = new ChatLineLedger();
         private DeferredChatQueue deferred;
         private readonly List<DeferredChatQueue.PendingLine> readyLines = new List<DeferredChatQueue.PendingLine>();
         private static readonly System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
@@ -130,6 +135,7 @@ namespace ZeepTwitchChat
             }
 
             ReleaseDeferredLines();
+            ApplyDeletions();
         }
 
         /// <summary>
@@ -153,13 +159,96 @@ namespace ZeepTwitchChat
             for (int i = 0; i < readyLines.Count; i++)
             {
                 DeferredChatQueue.PendingLine line = readyLines[i];
-                activeInjector.Enqueue(activeFormatter.Format(line.User, line.Text, line.Spans));
+                activeInjector.Enqueue(
+                    activeFormatter.Format(line.User, line.Text, line.Spans), line.MessageId);
 
                 if (HasUnreadyEmote(line.Spans, activeEmotes))
                 {
                     LogTimedOutLine();
                 }
             }
+        }
+
+        /// <summary>
+        /// Raised on the IRC thread when Twitch reports a deletion. Queued lines are cancelled
+        /// immediately; lines already on screen are queued for the main thread, which owns the
+        /// game's chat buffer.
+        /// </summary>
+        private void OnModerated(ChatModerationEvent moderation)
+        {
+            if (moderation == null || mirrorDeletions == null || !mirrorDeletions.Value)
+            {
+                return;
+            }
+
+            ModerationOutcome outcome;
+            string what;
+
+            if (moderation.IsSingleMessage)
+            {
+                outcome = ledger.MessageDeleted(moderation.MessageId);
+                what = "a moderator deleted a message from " +
+                       ChatLineFormatter.SanitiseText(moderation.Login, 32);
+            }
+            else if (moderation.IsWholeChat)
+            {
+                outcome = ledger.UserCleared(null);
+                what = "the chat was cleared";
+            }
+            else
+            {
+                outcome = ledger.UserCleared(moderation.Login);
+                what = ChatLineFormatter.SanitiseText(moderation.Login, 32) +
+                       (moderation.BanSeconds > 0
+                           ? " was timed out for " + moderation.BanSeconds + "s"
+                           : " was banned");
+            }
+
+            // Free the lines that were still waiting for their emote images.
+            DeferredChatQueue activeDeferred = deferred;
+            if (activeDeferred != null)
+            {
+                activeDeferred.Remove(moderation.MessageId,
+                    moderation.IsWholeChat ? null : moderation.Login);
+            }
+
+            if (!outcome.Known)
+            {
+                LogInfo("Twitch Chat: " + what + "; none of the affected lines were mirrored here.");
+                return;
+            }
+
+            LogInfo("Twitch Chat: " + what + ": " + outcome.Cancelled +
+                    " queued line(s) cancelled before they appeared, " + outcome.ToErase +
+                    " line(s) to remove from the chat window.");
+        }
+
+        /// <summary>
+        /// Applies pending deletions to the chat window. Main thread only; the ledger hands over
+        /// the exact strings this mod posted, so no lobby line can ever be touched.
+        /// </summary>
+        private void ApplyDeletions()
+        {
+            if (ledger.PendingRemovals == 0)
+            {
+                return;
+            }
+
+            List<string> removals = ledger.TakeRemovals();
+            if (removals == null || removals.Count == 0)
+            {
+                return;
+            }
+
+            if (removeShownLines == null || !removeShownLines.Value)
+            {
+                LogInfo("Twitch Chat: " + removals.Count + " deleted line(s) left on screen " +
+                        "(Moderation/RemoveShownLines is off).");
+                return;
+            }
+
+            ChatBufferEditor.Remove(ChatInjector.Instance, injector, removals,
+                message => Logger.LogInfo(message));
         }
 
         private static double Now => clock.Elapsed.TotalSeconds;
@@ -262,6 +351,17 @@ namespace ZeepTwitchChat
                 "Download BetterTTV and FrankerFaceZ emote images in the background after " +
                 "connecting, so their first use is instant. Uses a little bandwidth and memory.");
 
+            mirrorDeletions = Config.Bind("Moderation", "MirrorDeletions", true,
+                "Apply deletions to the in-game chat: when a moderator removes a message, times out " +
+                "or bans a user, or clears the chat, the matching Twitch lines are cancelled if still " +
+                "queued and removed if already shown. Twitch only sends these events to moderator " +
+                "and broadcaster connections, so this does nothing without a moderator OAuth token.");
+
+            removeShownLines = Config.Bind("Moderation", "RemoveShownLines", true,
+                "Remove lines that are already on screen (not just lines still waiting). This rewrites " +
+                "the game's own chat buffer with the survivors replayed through the game; turn it off " +
+                "to only cancel lines that have not been posted yet.");
+
             emoteSize = Config.Bind("Emotes", "EmoteSize", 24,
                 "Rendered emote size in pixels. The chat font is roughly 24px at 1080p; raise " +
                 "this if emotes look small, lower it if they crowd the line.");
@@ -349,7 +449,7 @@ namespace ZeepTwitchChat
                 60d,
                 Clamp(minimumSecondsBetweenMessages.Value, 0f, 60f));
 
-            injector = new ChatInjector(limiter, message => Logger.LogInfo(message));
+            injector = new ChatInjector(limiter, ledger, message => Logger.LogInfo(message));
 
             if (!modEnabled.Value)
             {
@@ -377,6 +477,7 @@ namespace ZeepTwitchChat
             TwitchIrcClient newClient = new TwitchIrcClient(options);
             newClient.Log += message => Logger.LogInfo(message);
             newClient.MessageReceived += OnTwitchMessage;
+            newClient.Moderated += OnModerated;
             newClient.ConnectionChanged += (connected, detail) =>
                 Logger.LogInfo("Twitch Chat: " + detail + ".");
             newClient.RoomIdKnown += roomId =>
@@ -438,7 +539,8 @@ namespace ZeepTwitchChat
         }
 
         /// <summary>Raised on the IRC background thread: format the line, then hand it to the injector.</summary>
-        private void OnTwitchMessage(TwitchChatUser user, string text, IReadOnlyList<EmoteSpan> spans)
+        private void OnTwitchMessage(TwitchChatUser user, string text, IReadOnlyList<EmoteSpan> spans,
+            string messageId)
         {
             ChatLineFormatter activeFormatter = formatter;
             ChatInjector activeInjector = injector;
@@ -462,16 +564,22 @@ namespace ZeepTwitchChat
                 activeEmotes.OnMessage(spans);
             }
 
+            // Remember the line before it is queued: a CLEARMSG can arrive before it is shown.
+            if (ledger != null && mirrorDeletions != null && mirrorDeletions.Value)
+            {
+                ledger.RecordPending(messageId, user.Login);
+            }
+
             DeferredChatQueue activeDeferred = deferred;
             if (activeDeferred != null && spans != null && spans.Count > 0 && HasUnreadyEmote(spans, activeEmotes))
             {
                 // The game keeps the rendered string, so wait for the images instead of
                 // writing the emote's text name permanently into the chat buffer.
-                activeDeferred.Add(user, text, spans, Now);
+                activeDeferred.Add(user, text, spans, Now, messageId);
                 return;
             }
 
-            activeInjector.Enqueue(activeFormatter.Format(user, text, spans));
+            activeInjector.Enqueue(activeFormatter.Format(user, text, spans), messageId);
 
             if (!loggedFirstMessage)
             {

@@ -25,6 +25,10 @@
     <Compile Include="EmoteGifChecks.cs" />
     <Compile Include="EmoteNameChecks.cs" />
     <Compile Include="SecurityChecks.cs" />
+    <Compile Include="ModerationChecks.cs" />
+    <Compile Include="../../plugin/ZeepTwitchChat.Plugin/Chat/ChatLineLedger.cs" />
+    <Compile Include="../../plugin/ZeepTwitchChat.Plugin/Chat/ChatBufferPlan.cs" />
+    <Compile Include="../../plugin/ZeepTwitchChat.Plugin/Twitch/ChatModerationEvent.cs" />
     <Compile Include="../../plugin/ZeepTwitchChat.Plugin/Chat/Emotes/EmoteUrlPolicy.cs" />
     <Compile Include="../../plugin/ZeepTwitchChat.Plugin/Chat/Emotes/EmoteWordScanner.cs" />
 

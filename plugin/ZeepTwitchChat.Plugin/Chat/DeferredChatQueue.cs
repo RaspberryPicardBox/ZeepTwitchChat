@@ -36,6 +36,9 @@ namespace ZeepTwitchChat.Chat
             public string Text;
             public IReadOnlyList<EmoteSpan> Spans;
             public double AddedAt;
+
+            /// <summary>Twitch's id for the message, so a deletion can cancel it.</summary>
+            public string MessageId;
         }
 
         public int Count
@@ -52,6 +55,13 @@ namespace ZeepTwitchChat.Chat
         /// <summary>Called from the IRC thread.</summary>
         public void Add(TwitchChatUser user, string text, IReadOnlyList<EmoteSpan> spans, double now)
         {
+            Add(user, text, spans, now, null);
+        }
+
+        /// <summary>Called from the IRC thread; the id lets a deletion cancel the line.</summary>
+        public void Add(TwitchChatUser user, string text, IReadOnlyList<EmoteSpan> spans, double now,
+            string messageId)
+        {
             lock (gate)
             {
                 lines.Add(new PendingLine
@@ -59,7 +69,8 @@ namespace ZeepTwitchChat.Chat
                     User = user,
                     Text = text,
                     Spans = spans,
-                    AddedAt = now
+                    AddedAt = now,
+                    MessageId = messageId
                 });
 
                 // Never build an unbounded backlog: the oldest lines fall through immediately.
@@ -67,6 +78,38 @@ namespace ZeepTwitchChat.Chat
                 {
                     lines.RemoveAt(0);
                 }
+            }
+        }
+
+        /// <summary>
+        /// Drops lines a moderator removed before they could be shown: by message id, by login,
+        /// or everything when both are empty. Returns how many went.
+        /// </summary>
+        public int Remove(string messageId, string login)
+        {
+            bool all = string.IsNullOrEmpty(messageId) && string.IsNullOrEmpty(login);
+
+            lock (gate)
+            {
+                int removed = 0;
+
+                for (int i = lines.Count - 1; i >= 0; i--)
+                {
+                    PendingLine line = lines[i];
+                    bool match = all ||
+                        (!string.IsNullOrEmpty(messageId) &&
+                         string.Equals(line.MessageId, messageId, StringComparison.Ordinal)) ||
+                        (!string.IsNullOrEmpty(login) && line.User != null &&
+                         string.Equals(line.User.Login, login, StringComparison.OrdinalIgnoreCase));
+
+                    if (match)
+                    {
+                        lines.RemoveAt(i);
+                        removed++;
+                    }
+                }
+
+                return removed;
             }
         }
 

@@ -4,6 +4,40 @@ All notable changes to ZeepTwitchChat are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-11-05
+
+### Added
+
+- **Deleted messages and bans are mirrored.** When a moderator deletes a message, times a user
+  out, bans them, or clears the chat, the matching lines are handled: a line still waiting for
+  its emote image is cancelled and never appears, and a line already on screen is removed from the
+  game's chat window. Every removal is logged with the line it removed, so a session can be
+  audited afterwards.
+- `Moderation/MirrorDeletions` (default `true`) and `Moderation/RemoveShownLines` (default
+  `true`, which does the on-screen removal; turn it off to only cancel lines not yet posted).
+- `ChatLineLedger`, `ChatBufferPlan` and `ChatBufferEditor`, each unit tested where it can be:
+  Twitch's `CLEARMSG`/`CLEARCHAT` parsing, cancel-before-post, remove-after-post, per-user and
+  chat-wide clears, and which buffer entries a removal applies to.
+
+### How the on-screen removal works
+
+Zeepkist keeps its chat in `receivedChatList` (rendered lines, newest first, twenty max) and
+`receivedChatIDs`, and rebuilds both text fields from them on every message. So erasing a line
+means dropping that entry from both lists and replaying the survivors through the game's own
+`UpdateChatFields(string, ulong)` - oldest first, so the order and the twenty line cap come out
+exactly as the game would have made them. Nothing about the game's rendering is re-implemented.
+If the replay ever throws, the original entries are put back so a chat window can never be left
+empty; only rendered strings this mod recorded are ever named for removal, so lobby chat is not
+touched.
+
+### Notes
+
+- Twitch sends `CLEARMSG`/`CLEARCHAT` to moderator and broadcaster connections. This mod reads
+  chat anonymously by default, so it may simply never be told; a moderator OAuth token in
+  `Twitch/OAuthToken` is what makes the feature do anything.
+- AutoMod is unaffected: a held message never reaches chat in the first place, and an approved one
+  arrives (and is mirrored) when it is approved.
+
 ## [1.3.4] - 2026-11-05
 
 ### Security

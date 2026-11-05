@@ -30,6 +30,7 @@ the integrity of what other players appear to say.
 | Local file read via a crafted URL | **Fixed.** Emote urls are https-only, host allow-listed, redirect-disabled (see *Urls*). |
 | Memory exhaustion / crash | **Bounded** at every growth point (line, JSON, image, frame, atlas, queue, name registry). |
 | Name spoofing | **Hardened**: bidi overrides and zero width characters are removed from untrusted text. |
+| Writing to the game's chat buffer | **Narrow and guarded.** Deletions remove entries from `receivedChatList`/`receivedChatIDs` by matching strings this mod recorded when it posted them, and the survivors are replayed through the game's own method. No network value is ever used as a buffer index or a string; if the replay throws, the original entries are restored. |
 | Reading chat (privacy) | Read-only and anonymous; nothing is ever sent except IRC login/PONG and the JOIN. |
 
 ## Code execution surface

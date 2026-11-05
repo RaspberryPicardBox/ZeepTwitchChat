@@ -25,7 +25,8 @@ namespace ZeepTwitchChat.Chat
 
         private readonly Action<string> log;
         private readonly MessageRateLimiter limiter;
-        private readonly ConcurrentQueue<string> pending = new ConcurrentQueue<string>();
+        private readonly ConcurrentQueue<QueuedLine> pending = new ConcurrentQueue<QueuedLine>();
+        private readonly ChatLineLedger ledger;
 
         private MethodInfo updateChatFields;
         private FastInvokeHandler fastInvoker;
@@ -34,9 +35,10 @@ namespace ZeepTwitchChat.Chat
         private float lastDropLogTime;
         private int droppedSinceLog;
 
-        public ChatInjector(MessageRateLimiter limiter, Action<string> log)
+        public ChatInjector(MessageRateLimiter limiter, ChatLineLedger ledger, Action<string> log)
         {
             this.limiter = limiter ?? throw new ArgumentNullException(nameof(limiter));
+            this.ledger = ledger;
             this.log = log ?? delegate { };
         }
 
@@ -49,15 +51,18 @@ namespace ZeepTwitchChat.Chat
         /// <summary>Lines waiting to be written, for diagnostics.</summary>
         public int Pending => pending.Count;
 
-        /// <summary>Safe to call from the IRC background thread.</summary>
-        public void Enqueue(string richLine)
+        /// <summary>
+        /// Safe to call from the IRC background thread. The message id ties the line to the
+        /// ledger, so a deletion that arrives while the line is queued stops it being shown.
+        /// </summary>
+        public void Enqueue(string richLine, string messageId)
         {
             if (string.IsNullOrEmpty(richLine))
             {
                 return;
             }
 
-            pending.Enqueue(richLine);
+            pending.Enqueue(new QueuedLine { Rendered = richLine, MessageId = messageId });
 
             // Never let a busy channel build an unbounded backlog: drop the oldest lines.
             while (pending.Count > MaxQueuedLines && pending.TryDequeue(out _))
@@ -89,19 +94,40 @@ namespace ZeepTwitchChat.Chat
                     return;
                 }
 
-                if (!pending.TryDequeue(out string line))
+                if (!pending.TryDequeue(out QueuedLine queued))
                 {
                     return;
                 }
 
-                if (!Write(chatUi, line))
+                // A line deleted while it waited must not appear at all.
+                if (ledger != null && !ledger.TryPost(queued.MessageId, queued.Rendered))
+                {
+                    continue;
+                }
+
+                if (!Write(chatUi, queued.Rendered))
                 {
                     return;
                 }
             }
         }
 
+        /// <summary>
+        /// Appends one line straight away, bypassing the queue and the rate limiter. Used when the
+        /// chat buffer has to be rebuilt after a deletion: the game's own method is re-run for
+        /// each surviving line, which reproduces its rendering exactly.
+        /// </summary>
+        public bool Append(OnlineChatUI chatUi, string line, ulong steamId)
+        {
+            return chatUi != null && Write(chatUi, line, steamId);
+        }
+
         private bool Write(OnlineChatUI chatUi, string line)
+        {
+            return Write(chatUi, line, 0UL);
+        }
+
+        private bool Write(OnlineChatUI chatUi, string line, ulong steamId)
         {
             if (!ResolveChatMethod())
             {
@@ -114,7 +140,7 @@ namespace ZeepTwitchChat.Chat
                 {
                     try
                     {
-                        fastInvoker(chatUi, line, 0UL);
+                        fastInvoker(chatUi, line, steamId);
                         return true;
                     }
                     catch (Exception invokerFailure)
@@ -131,7 +157,7 @@ namespace ZeepTwitchChat.Chat
                 // Reflection is slower than the emitted delegate but perfectly adequate for a
                 // few dozen lines a minute, and it does not depend on Harmony's dynamic
                 // method support.
-                updateChatFields.Invoke(chatUi, new object[] { line, 0UL });
+                updateChatFields.Invoke(chatUi, new object[] { line, steamId });
                 return true;
             }
             catch (Exception exception)
@@ -144,6 +170,12 @@ namespace ZeepTwitchChat.Chat
                     "In-game Twitch chat is disabled until the next lobby.");
                 return false;
             }
+        }
+
+        private struct QueuedLine
+        {
+            public string Rendered;
+            public string MessageId;
         }
 
         private static Exception Unwrap(Exception exception)
