@@ -32,7 +32,7 @@ lobby: the lines are written straight into your local chat UI.
   way the game renders its own chat lines.
 - Draws **emotes as images** — native Twitch emotes, plus BetterTTV, FrankerFaceZ and 7TV (global
   and channel) — downloading each one the first time it is used and caching it for the session.
-  Animated emotes play as animations, and emote names may contain punctuation (`:tf:`, `D:`, `:)`).
+  Animated emotes play as animations, and emote names may contain punctuation (`:tf:`, `D:`, `<3`).
 - Rate-limits and truncates so a fast channel cannot flood the chat.
 - Reconnects on its own if the connection drops.
 

@@ -152,9 +152,14 @@ emotes still have readable tags), anything else becomes `e` + an eight digit FNV
 frames hang off that alias (`alias~1`, `alias~2`, ...).
 
 That separation is what makes the relaxed name rule safe: the only text we ever put inside
-`<sprite name="...">` is an alias we generated, so a provider emote cannot inject a quote, a
-closing bracket or markup, whatever it is called. Message text is still sanitised character by
-character for everything that is not an emote.
+`<sprite name="...">` is an alias we generated, so an emote cannot inject a quote, a closing
+bracket or markup, whatever it is called. A name may therefore contain anything a provider
+allows - `:tf:`, `:)`, `<3` - and the only rule left is "no whitespace, no control characters",
+because a name has to be matchable as a single word.
+
+Text that is *not* an emote is still sanitised character by character, angle brackets included.
+That is the fallback for an emote whose image is not available: `<3` shows as `3` rather than as
+text that TMP might interpret.
 
 ### GIF and animation (1.3.0)
 

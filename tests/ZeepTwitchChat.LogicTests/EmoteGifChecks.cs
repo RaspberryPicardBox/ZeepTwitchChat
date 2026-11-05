@@ -340,6 +340,57 @@ namespace ZeepTwitchChat.LogicTests
             }
         }
 
+        /// <summary>
+        /// The reported case end to end, offline apart from the image itself: a raw IRC line
+        /// carrying an emote called <c>&lt;3</c>, through the real parser, into a sprite tag, and
+        /// the bytes that Twitch's CDN actually serves for it.
+        /// </summary>
+        private static int CheckAngleBracketEmoteRoundTrip()
+        {
+            const string label = "angle bracket emote (<3) round trip";
+
+            try
+            {
+                const string raw =
+                    "@emotes=89:2-3;display-name=Someone :someone!someone@someone.tmi.twitch.tv " +
+                    "PRIVMSG #channel :i <3 it";
+
+                if (!TwitchIrcParser.TryParse(raw, out IrcMessage message))
+                {
+                    Console.WriteLine("  FAIL  " + label + ": the sample IRC line did not parse");
+                    return 1;
+                }
+
+                string text = TwitchIrcClient.NormaliseChatText(message.Trailing);
+                List<EmoteSpan> spans = TwitchEmoteTagParser.Parse(message.GetTag("emotes"), text);
+
+                if (spans.Count != 1 || spans[0].Name != "<3" || spans[0].Id != "89")
+                {
+                    Console.WriteLine("  FAIL  " + label + ": span was not kept (" + spans.Count + ")");
+                    return 1;
+                }
+
+                byte[] image = FetchBytes(EmoteUrls.Twitch(spans[0].Id));
+                bool isPng = image.Length > 8 && image[0] == 0x89 && image[1] == 0x50 &&
+                    image[2] == 0x4E && image[3] == 0x47;
+
+                string glyph = EmoteFrameNames.Alias(spans[0].Name);
+                string tag = EmoteFrameNames.Tag(glyph, 0, 1);
+                bool safe = EmoteFrameNames.IsGlyphSafe(glyph) && !tag.Contains("<3");
+
+                bool ok = isPng && safe && spans[0].Start == 2 && spans[0].Length == 2;
+                Console.WriteLine("  " + (ok ? "PASS" : "FAIL") + "  " + label + ": span " +
+                    spans[0] + " at " + spans[0].Start + ", glyph " + glyph + ", image " +
+                    image.Length + " bytes (png=" + isPng + ")");
+                return ok ? 0 : 1;
+            }
+            catch (Exception exception)
+            {
+                Console.WriteLine("  FAIL  " + label + ": " + exception.GetType().Name + ": " + exception.Message);
+                return 1;
+            }
+        }
+
         private static string Fetch(string url)
         {
             return Encoding.UTF8.GetString(FetchBytes(url));

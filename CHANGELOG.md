@@ -4,6 +4,23 @@ All notable changes to ZeepTwitchChat are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.3] - 2026-11-05
+
+### Fixed
+
+- **Emotes whose names contain an angle bracket, like Twitch's `<3`, stayed text.** The name rule
+  still refused `<` and `>` (a leftover from when a name was written straight into a sprite tag).
+  It now only refuses whitespace and control characters, so any punctuation a provider allows can
+  be matched.
+
+### Security
+
+- Keeping the raw name out of markup is what makes that safe, and it still holds: the sprite tag
+  is built from the aliased glyph name, never the emote's own name. An emote that is not renderable
+  (image not in yet, or over the cache cap) falls through to the message sanitiser, which removes
+  angle brackets, so `<3` degrades to `3` rather than to markup. A name containing whitespace is
+  still rejected, because it could never be matched as one word anyway.
+
 ## [1.3.2] - 2026-11-05
 
 ### Fixed

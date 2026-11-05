@@ -331,7 +331,7 @@ namespace ZeepTwitchChat.LogicTests
             Check("reversed range dropped", TwitchEmoteTagParser.Parse("25:4-2", "Kappa").Count == 0);
             Check("garbage dropped", TwitchEmoteTagParser.Parse("x:y-z", "Kappa").Count == 0);
             Check("overlap dropped", TwitchEmoteTagParser.Parse("25:0-4/26:2-6", "Kappa Kappa").Count == 1);
-            Check("unsafe emote name dropped", TwitchEmoteTagParser.Parse("25:0-5", "<b>x</b>").Count == 0);
+            Check("name with whitespace dropped", TwitchEmoteTagParser.Parse("25:0-4", "a b c").Count == 0);
             Check("empty tag yields none", TwitchEmoteTagParser.Parse(null, "Kappa").Count == 0);
 
             // --- provider response parsing -------------------------------------------
@@ -348,8 +348,10 @@ namespace ZeepTwitchChat.LogicTests
                 "{\"sets\":{\"1\":{\"emoticons\":[{\"id\":12345,\"name\":\"FFZEmote\"}]}}}");
             Check("ffz numeric id", ffz.Urls.Count == 1 && ffz.Urls["FFZEmote"] == "12345");
 
-            Check("unsafe provider name dropped",
-                EmoteProviderParsers.ParseBttv("[{\"id\":\"x\",\"code\":\"bad<name>\"}]").Urls.Count == 0);
+            Check("provider name with whitespace dropped",
+                EmoteProviderParsers.ParseBttv("[{\"id\":\"x\",\"code\":\"bad name\"}]").Urls.Count == 0);
+            Check("provider name with markup characters kept",
+                EmoteProviderParsers.ParseBttv("[{\"id\":\"y\",\"code\":\"<3\"}]").Urls.Count == 1);
             Check("webp bttv emote dropped, png kept",
                 EmoteProviderParsers.ParseBttv(
                     "[{\"id\":\"a\",\"code\":\"WebpOne\",\"imageType\":\"webp\"}," +
@@ -513,6 +515,7 @@ namespace ZeepTwitchChat.LogicTests
                 EmoteProviderParsers.ParseSevenTv, url => url);
             failures += CheckAnimatedEmoteRoundTrip();
             failures += CheckPunctuatedEmoteRoundTrip();
+            failures += CheckAngleBracketEmoteRoundTrip();
 
             Console.WriteLine();
             Console.WriteLine("provider probe: " + failures + " failure(s).");

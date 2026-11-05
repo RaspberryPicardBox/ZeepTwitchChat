@@ -14,9 +14,9 @@
   <PropertyGroup>
     <AssemblyName>ZeepTwitchChat</AssemblyName>
     <RootNamespace>ZeepTwitchChat</RootNamespace>
-    <Version>1.3.2</Version>
-    <AssemblyVersion>1.3.2.0</AssemblyVersion>
-    <FileVersion>1.3.2.0</FileVersion>
+    <Version>1.3.3</Version>
+    <AssemblyVersion>1.3.3.0</AssemblyVersion>
+    <FileVersion>1.3.3.0</FileVersion>
     <Product>ZeepTwitchChat</Product>
     <Description>Shows your own Twitch chat in Zeepkist's in-game chat, colour-coded and labelled.</Description>
     <Copyright>MIT</Copyright>

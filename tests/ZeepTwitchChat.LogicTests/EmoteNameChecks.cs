@@ -22,9 +22,28 @@ namespace ZeepTwitchChat.LogicTests
             Check("colon name is accepted", TwitchEmoteTagParser.IsSafeEmoteName("nyxeon:3"));
             Check("punctuation is accepted", TwitchEmoteTagParser.IsSafeEmoteName("Kappa!"));
             Check("space is rejected", !TwitchEmoteTagParser.IsSafeEmoteName("two words"));
-            Check("angle bracket is rejected", !TwitchEmoteTagParser.IsSafeEmoteName("<b>"));
+            Check("a heart emote is accepted", TwitchEmoteTagParser.IsSafeEmoteName("<3"));
+            Check("a bare angle bracket is accepted", TwitchEmoteTagParser.IsSafeEmoteName("<"));
+            Check("a name may contain markup characters",
+                TwitchEmoteTagParser.IsSafeEmoteName("a<b>c"));
             Check("over-long name is rejected",
                 !TwitchEmoteTagParser.IsSafeEmoteName(new string('a', 65)));
+
+            // --- a native emote called <3 (Twitch's own) ------------------------------
+            List<EmoteSpan> hearts = TwitchEmoteTagParser.Parse("89:0-1", "<3");
+            Check("a native <3 span survives parsing",
+                hearts.Count == 1 && hearts[0].Name == "<3" && hearts[0].Id == "89",
+                hearts.Count == 1 ? hearts[0].ToString() : "dropped");
+
+            string heartAlias = EmoteFrameNames.Alias("<3");
+            Check("a heart gets a tag-safe alias",
+                EmoteFrameNames.IsGlyphSafe(heartAlias) && heartAlias != "<3",
+                heartAlias);
+            Check("the heart's tag carries no bracket",
+                !EmoteFrameNames.Tag(heartAlias, 0, 1).Contains("<3"));
+
+            Check("a heart is matched as one word",
+                EmoteWordScanner.Merge("i <3 it", null, w => w == "<3").Count == 1);
 
             // --- glyph aliases -------------------------------------------------------
             Check("a safe name keeps its own name", EmoteFrameNames.Alias("Kappa") == "Kappa");
@@ -98,6 +117,19 @@ namespace ZeepTwitchChat.LogicTests
             Check("no raw colon survives inside the tag", !line.Contains("name=" + (char)34 + "nyxeon"), line);
             Check("the rest of the message is intact",
                 line.EndsWith("look " + EmoteFrameNames.Tag(colonAlias, 0, 1) + " here"), line);
+            ChatLineFormatter heartFormatter = new ChatLineFormatter(options, new AliasProvider(w => w == "<3"));
+            string heartLine = heartFormatter.Format(user, "i <3 it",
+                TwitchEmoteTagParser.Parse("89:2-3", "i <3 it"));
+            Check("a heart renders as a sprite",
+                heartLine.Contains(EmoteFrameNames.Tag(heartAlias, 0, 1)), heartLine);
+            Check("the raw heart never reaches the line", !heartLine.Contains("<3"), heartLine);
+
+            ChatLineFormatter plainHeart = new ChatLineFormatter(options, new AliasProvider(w => false));
+            string unresolved = plainHeart.Format(user, "i <3 it",
+                TwitchEmoteTagParser.Parse("89:2-3", "i <3 it"));
+            Check("an unready heart is stripped, not injected",
+                unresolved.EndsWith("i 3 it") && !unresolved.Contains("<3"), unresolved);
+
             Check("a message with no emote is untouched",
                 formatter.Format(user, "plain words", null).EndsWith("plain words"));
         }

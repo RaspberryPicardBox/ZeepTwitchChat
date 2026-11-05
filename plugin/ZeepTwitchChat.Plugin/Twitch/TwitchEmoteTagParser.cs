@@ -134,11 +134,13 @@ namespace ZeepTwitchChat.Twitch
         /// <summary>
         /// True when a name can be matched against chat safely.
         ///
-        /// Provider emotes are allowed punctuation (a colon, brackets, whatever their site
-        /// permits), and they are matched as whole whitespace-delimited words, so the only hard
-        /// requirements are: no whitespace, no control characters and no angle brackets. The
-        /// glyph itself is stored under a tag-safe alias, so the raw name never reaches the
-        /// rich text we emit.
+        /// Emote names are allowed any punctuation their site permits - a colon, brackets, a
+        /// heart like <c>&lt;3</c> - because they are matched as whole whitespace-delimited
+        /// words and are never written into markup: the glyph is stored under a tag-safe alias
+        /// (<see cref="Emotes.EmoteFrameNames.Alias"/>). If an emote is not renderable its raw
+        /// text goes through the formatter's per-character sanitiser, which removes angle
+        /// brackets, so the only hard requirements here are no whitespace and no control
+        /// characters.
         /// </summary>
         public static bool IsSafeEmoteName(string name)
         {
@@ -150,7 +152,7 @@ namespace ZeepTwitchChat.Twitch
             for (int i = 0; i < name.Length; i++)
             {
                 char c = name[i];
-                if (c < ' ' || char.IsWhiteSpace(c) || c == '<' || c == '>')
+                if (c < ' ' || char.IsWhiteSpace(c))
                 {
                     return false;
                 }
